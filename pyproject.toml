@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hermes-id"
 version = "1.0.0"
-description = "Self-Sovereign Identity for Hermes Agent — Ed25519 DID, verifiable identity cards, secure handshake protocol"
+description = "Self-Sovereign Identity for Hermes Agent — Ed25519 DID, verifiable identity cards, secure handshake protocol, HTTP auth server, and MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Hermes ID Contributors"}
 ]
-keywords = ["hermes", "identity", "did", "cryptography", "ed25519", "authentication"]
+keywords = ["hermes", "identity", "did", "cryptography", "ed25519", "authentication", "mcp", "auth-server"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -29,8 +29,20 @@ dependencies = [
 
 [project.optional-dependencies]
 argon2 = ["argon2-cffi>=21.0.0"]
+server = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "httpx>=0.27.0",
+]
+mcp = [
+    "mcp>=1.0.0",
+]
 all = [
     "argon2-cffi>=21.0.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "httpx>=0.27.0",
+    "mcp>=1.0.0",
 ]
 
 [project.scripts]

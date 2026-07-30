@@ -182,3 +182,151 @@ make lint
 ## License
 
 MIT
+
+---
+
+## Auth Server — Integration for spacetime-x Projects
+
+hermes-id now includes an **HTTP Auth Server** and **agent registry** that makes
+it drop-dead simple for agents to authenticate with any spacetime-x service.
+
+### Quick Start
+
+```bash
+# Install with all extras
+pip install 'hermes-id[all]'
+
+# Set your passphrase (if not stored yet)
+export HERMES_ID_PASSPHRASE="your-passphrase"
+
+# Start the auth server
+hermes-id server --port 9488
+```
+
+### Auth Flow — Agent Perspective
+
+```python
+from hermes_id.auth_client import AuthFlow, AuthClient
+
+# 1. Authenticate and get a token
+flow = AuthFlow("http://auth-server:9488", identity_dir="~/.hermes/identity")
+token = flow.login()
+
+# Present token to any spacetime-x service
+response = my_service.call_api(token=token)
+```
+
+### Auth Flow — Service Perspective
+
+```python
+from hermes_id.auth_client import AuthClient
+
+server_card = client.get_identity()  # get the server's identity card
+client = AuthClient("http://auth-server:9488")
+
+# Verify a token presented by an agent
+payload = client.verify_token(token)
+if payload:
+    print(f"Agent {payload['did']} authenticated ✓")
+```
+
+### Agent Registration & Approval Workflow
+
+```
+┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
+│  Agent       │     │  hermes-id Auth   │     │  Admin       │
+│  (Hermes)    │     │  Server           │     │  (You)       │
+└──────┬───────┘     └────────┬─────────┘     └──────┬────────┘
+       │                      │                       │
+       │  POST /agents/register│                      │
+       │  {did, identity_card} │                      │
+       ├──────────────────────►│                      │
+       │  "status": "pending"  │                      │
+       │◄──────────────────────┤                      │
+       │                      │                       │
+       │                      │  POST /agents/{did}/approve
+       │                      │◄──────────────────────┤
+       │                      │  "status": "approved" │
+       │                      ├──────────────────────►│
+       │                      │                       │
+       │  POST /challenge     │                       │
+       ├──────────────────────►│                       │
+       │◄──── challenge_b64 ──┤                       │
+       │                      │                       │
+       │  POST /authenticate  │                       │
+       │  {did, signature,    │                       │
+       │   challenge_b64,     │                       │
+       │   identity_card}     │                       │
+       ├──────────────────────►│                       │
+       │◄─── signed_token ────┤                       │
+       │                      │                       │
+       │  Use token to call   │                       │
+       │  any spacetime-x API │                       │
+       │  via Bearer Auth     │                       │
+```
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/identity` | Server's identity card (DID, public key) |
+| `POST` | `/challenge` | Request a random challenge nonce |
+| `POST` | `/authenticate` | Prove identity → get signed auth token |
+| `POST` | `/verify` | Verify a signed auth token |
+| `GET` | `/agents` | List all registered agents |
+| `POST` | `/agents/register` | Self-register with identity card |
+| `POST` | `/agents/{did}/approve` | Admin: approve an agent |
+| `POST` | `/agents/{did}/deny` | Admin: deny an agent |
+| `GET` | `/agents/{did}/status` | Check agent's approval status |
+| `DELETE` | `/agents/{did}` | Remove agent from registry |
+| `GET` | `/health` | Health check + server DID |
+
+### MCP Server
+
+For other Hermes agents, an MCP server is available:
+
+```bash
+# Add to hermes config.yaml
+# mcp_servers:
+#   hermes-id:
+#     command: "hermes-id"
+#     args: ["mcp"]
+```
+
+Exposed MCP tools: `hermes_id_status`, `hermes_id_export`, `hermes_id_verify_card`,
+`hermes_id_sign`, `hermes_id_verify_signature`, `hermes_id_auth_client`.
+
+### Python AuthClient
+
+```python
+from hermes_id.auth_client import AuthClient
+
+client = AuthClient("http://localhost:9488", identity_dir="~/.hermes/identity")
+
+# Check server health
+print(client.health())
+
+# Register this agent
+client.register_agent("did:hermes:abc", display_name="My Agent")
+
+# Full auth (sign challenge → get token)
+sig = client.sign_challenge(challenge_b64)
+result = client.authenticate("did:hermes:abc", challenge_b64, sig)
+token = result["token"]
+
+# Verify a token from another agent
+payload = client.verify_token(token)
+```
+
+### Token Format
+
+Auth tokens are Ed25519-signed JSON payloads in the format:
+
+```
+base64url(payload) || "." || base64url(signature)
+```
+
+The payload contains `{did, issuer, issued_at, expires_at, purpose}`.  
+Services can verify tokens by calling `POST /verify` or using
+`hermes_id.server.verify_auth_token(token)` directly.
+

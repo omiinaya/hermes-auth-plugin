@@ -104,6 +104,22 @@ def main(argv: list[str] | None = None) -> int:
     hs_connect.add_argument("--password", help="Passphrase for private key")
     hs_connect.add_argument("--peer-did", help="Expected peer DID")
 
+    # server
+    server_p = sub.add_parser(
+        "server", parents=[parent],
+        help="Start the HTTP Auth Server (FastAPI) — challenge-response auth, agent registry, token issuance",
+    )
+    server_p.add_argument("--port", type=int, default=9488, help="TCP port (default: 9488)")
+    server_p.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    server_p.add_argument("--db", help="Path to agent registry database (default: agent_registry.db)")
+    server_p.add_argument("--token-ttl", type=int, default=86400, help="Token lifetime in seconds (default: 86400)")
+
+    # mcp
+    sub.add_parser(
+        "mcp", parents=[parent],
+        help="Start the MCP stdio server for agent-to-agent auth tools",
+    )
+
     args = parser.parse_args(argv)
     return _dispatch(args)
 
@@ -137,6 +153,10 @@ def _dispatch(args: argparse.Namespace) -> int:
             return _cmd_verify_sig(args)
         elif args.command == "handshake":
             return _cmd_handshake(args)
+        elif args.command == "server":
+            return _cmd_server(args)
+        elif args.command == "mcp":
+            return _cmd_mcp(args)
         else:
             print(f"Unknown command: {args.command}")
             return 1
@@ -182,6 +202,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
         return 1
 
     password = args.password
+    if not password:
+        password = os.environ.get("HERMES_ID_PASSPHRASE") or ""
     if not password:
         password = _prompt_password()
 
@@ -272,6 +294,8 @@ def _cmd_sign(args: argparse.Namespace) -> int:
 
     password = args.password
     if not password:
+        password = os.environ.get("HERMES_ID_PASSPHRASE") or ""
+    if not password:
         import getpass
         password = getpass.getpass("Passphrase: ")
 
@@ -355,6 +379,8 @@ def _cmd_handshake(args: argparse.Namespace) -> int:
 
     password = args.password
     if not password:
+        password = os.environ.get("HERMES_ID_PASSPHRASE") or ""
+    if not password:
         import getpass
         password = getpass.getpass("Passphrase: ")
 
@@ -412,6 +438,37 @@ def _cmd_handshake(args: argparse.Namespace) -> int:
             return 1
 
     return 1
+
+
+def _cmd_server(args: argparse.Namespace) -> int:
+    """Start the HTTP Auth Server."""
+    try:
+        from hermes_id.server import AuthServer
+    except ImportError as e:
+        print(f"❌ Cannot start server: {e}", file=sys.stderr)
+        print("   Install: pip install 'hermes-id[server]'", file=sys.stderr)
+        return 1
+
+    server = AuthServer(
+        identity_dir=args.dir,
+        db_path=args.db,
+        token_ttl=args.token_ttl,
+    )
+    server.run(host=args.host, port=args.port)
+    return 0
+
+
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    """Start the MCP stdio server."""
+    try:
+        from hermes_id.mcp_server import main as mcp_main
+    except ImportError as e:
+        print(f"❌ Cannot start MCP server: {e}", file=sys.stderr)
+        print("   Install: pip install 'hermes-id[mcp]'", file=sys.stderr)
+        return 1
+
+    mcp_main()
+    return 0
 
 
 if __name__ == "__main__":
