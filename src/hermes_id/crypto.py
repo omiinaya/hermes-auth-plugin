@@ -32,6 +32,36 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 # ---------------------------------------------------------------------------
+# Secure memory zeroing
+# ---------------------------------------------------------------------------
+
+def secure_zero(data: bytearray | memoryview) -> None:
+    """Overwrite a mutable buffer with zeros.
+
+    Uses ``ctypes.memset`` via a C library call that the compiler will
+    **not** optimize away, unlike a pure-Python ``= b'\\x00' * n`` which
+    the interpreter may elide for dead objects.
+
+    This is **best-effort** on Python objects.  The ``cryptography``
+    library manages Ed25519 private keys internally; we overwrite the
+    DER-serialized bytes and any temporary buffers we control.
+
+    Usage::
+
+        buf = bytearray(sensitive_data)
+        secure_zero(buf)
+        # buf now contains all zeros
+    """
+    import ctypes
+    length = len(data)
+    if length == 0:
+        return
+    # Get a mutable pointer and fill with zeros
+    ptr = (ctypes.c_char * length).from_buffer(data)
+    ctypes.memset(ptr, 0, length)
+
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 

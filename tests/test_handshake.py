@@ -316,61 +316,6 @@ class TestTCPTransport:
         assert received[0].msg_type == "hello"
         assert response.msg_type == "hello"
 
-    def test_full_tcp_handshake(self, alice, bob):
-        """End-to-end TCP handshake between two processes (peer-to-peer)."""
-        import socket
-
-        alice_private, alice_card = alice
-        bob_private, bob_card = bob
-
-        # Start Bob's server in a thread
-        bob_ready = threading.Event()
-        bob_result = []
-
-        def bob_server():
-            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server.bind(("127.0.0.1", 0))
-            port = server.getsockname()[1]
-            bob_ready.set()  # signal port to Alice
-            server.listen(1)
-            server.settimeout(5.0)
-
-            conn, addr = server.accept()
-            hp = HandshakeProtocol(bob_card, bob_private, is_responder=True)
-
-            hello = recv_message(conn)
-            challenge = hp.handle_message(hello)
-            send_message(conn, challenge)
-
-            auth = recv_message(conn)
-            confirm = hp.handle_message(auth)
-            send_message(conn, confirm)
-
-            # Complete
-            try:
-                final = recv_message(conn, timeout=3.0)
-                hp.handle_message(final)
-            except HandshakeError:
-                pass
-
-            bob_result.append(hp.is_authenticated)
-            conn.close()
-            server.close()
-
-        t = threading.Thread(target=bob_server, daemon=True)
-        t.start()
-        bob_ready.wait(timeout=3.0)
-
-        # Alice connects
-        alice_hp = HandshakeProtocol(alice_card, alice_private, is_responder=False)
-
-        # Find Bob's port by scanning for it (simplification: we'd share
-        # the port properly in production; for testing we use known port)
-        # Instead, let's use run_handshake_server/client functions
-        pass  # covered by test below
-
-
 class TestHandshakeIntegration:
     def test_tcp_handshake_with_helpers(self, alice, bob):
         """Use run_handshake_server and run_handshake_client."""

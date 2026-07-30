@@ -133,6 +133,21 @@ class HandshakeError(Exception):
     """Raised on protocol violations, crypto failures, or timeouts."""
 
 
+class HandshakeErrorCode:
+    """Machine-readable error codes for the handshake protocol."""
+    UNKNOWN = "UNKNOWN"
+    PROTOCOL_VIOLATION = "PROTOCOL_VIOLATION"
+    INVALID_SIGNATURE = "INVALID_SIGNATURE"
+    INVALID_IDENTITY_CARD = "INVALID_IDENTITY_CARD"
+    MISSING_FIELD = "MISSING_FIELD"
+    CRYPTO_FAILURE = "CRYPTO_FAILURE"
+    SEQUENCE_ERROR = "SEQUENCE_ERROR"
+    PEER_REJECTED = "PEER_REJECTED"
+    TIMEOUT = "TIMEOUT"
+    CONNECTION_ERROR = "CONNECTION_ERROR"
+    MESSAGE_TOO_LARGE = "MESSAGE_TOO_LARGE"
+
+
 # ---------------------------------------------------------------------------
 # Callback types
 # ---------------------------------------------------------------------------
@@ -592,11 +607,24 @@ def run_handshake_server(
     on_verify: Optional[OnVerifyCallback] = None,
     on_confirm: Optional[OnConfirmCallback] = None,
     stop_event: Optional[threading.Event] = None,
+    rate_limit: int = 10,
+    rate_window: float = 60.0,
 ) -> None:
     """Run a blocking TCP handshake server (responder role).
 
     Accepts one connection at a time and performs a full mutual
     authentication handshake.
+
+    Args:
+        identity_card: This server's identity card.
+        private_key: This server's private key.
+        host: Bind address.
+        port: TCP port.
+        on_verify: Optional callback to verify peer cards.
+        on_confirm: Optional callback on successful auth.
+        stop_event: Set this event to stop the server gracefully.
+        rate_limit: Max handshakes per *rate_window* seconds.
+        rate_window: Time window in seconds for rate limiting.
     """
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -604,8 +632,12 @@ def run_handshake_server(
     server.listen(1)
     server.settimeout(1.0)  # 1s timeout so we can check stop_event
 
+    # Simple sliding-window rate limiter
+    _rate_hits: list[float] = []
+
     print(f"🎧 Handshake server listening on {host}:{port}")
     print(f"   DID: {identity_card.id}")
+    print(f"   Rate limit: {rate_limit} handshakes per {rate_window}s")
 
     try:
         while True:
@@ -615,6 +647,15 @@ def run_handshake_server(
                 conn, addr = server.accept()
             except socket.timeout:
                 continue
+
+            # Rate limit check
+            now = time.monotonic()
+            _rate_hits = [t for t in _rate_hits if now - t < rate_window]
+            if len(_rate_hits) >= rate_limit:
+                print(f"⏱️  Rate limit exceeded from {addr}")
+                conn.close()
+                continue
+            _rate_hits.append(now)
 
             print(f"\n🔗 Connection from {addr}")
             try:

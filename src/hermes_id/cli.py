@@ -43,56 +43,63 @@ from hermes_id.handshake import (
 )
 
 
+from hermes_id import __version__ as VERSION
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
+    # Parent parser with shared arguments
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument("--dir", help="Identity storage directory")
+
     parser = argparse.ArgumentParser(
         prog="hermes-id",
         description="Self-Sovereign Identity for Hermes Agent instances",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--version", action="store_true", help="Show version and exit")
+    sub = parser.add_subparsers(dest="command")
 
     # init
-    init_p = sub.add_parser("init", help="Create a new identity card + keypair")
+    init_p = sub.add_parser("init", parents=[parent], help="Create a new identity card + keypair")
     init_p.add_argument("--password", help="Encryption passphrase (prompts if omitted)")
-    init_p.add_argument("--dir", help="Storage directory")
     init_p.add_argument("--profile", help="Profile name (stored in metadata)")
     init_p.add_argument("--force", action="store_true", help="Overwrite existing identity")
 
     # show
-    sub.add_parser("show", help="Display your identity card")
+    sub.add_parser("show", parents=[parent], help="Display your identity card")
 
     # export
-    export_p = sub.add_parser("export", help="Export identity card as JSON")
+    export_p = sub.add_parser("export", parents=[parent], help="Export identity card as JSON")
     export_p.add_argument("output", nargs="?", help="Output file (default: stdout)")
 
     # status
-    sub.add_parser("status", help="Show identity status")
+    sub.add_parser("status", parents=[parent], help="Show identity status")
 
     # verify
-    verify_p = sub.add_parser("verify", help="Verify an identity card file")
+    verify_p = sub.add_parser("verify", parents=[parent], help="Verify an identity card file")
     verify_p.add_argument("file", help="Path to identity card JSON")
 
     # sign
-    sign_p = sub.add_parser("sign", help="Sign a file with your identity")
+    sign_p = sub.add_parser("sign", parents=[parent], help="Sign a file with your identity")
     sign_p.add_argument("file", help="File to sign")
     sign_p.add_argument("--password", help="Passphrase for private key")
 
     # verify-sig
-    vs_p = sub.add_parser("verify-sig", help="Verify a signature against an identity card")
+    vs_p = sub.add_parser("verify-sig", parents=[parent], help="Verify a signature against an identity card")
     vs_p.add_argument("file", help="Original file")
     vs_p.add_argument("signature", help="Signature file or base64 string")
     vs_p.add_argument("--identity", help="Identity card JSON file (required)")
 
     # handshake
-    hs_p = sub.add_parser("handshake", help="Perform a mutual authentication handshake")
+    hs_p = sub.add_parser("handshake", parents=[parent], help="Perform a mutual authentication handshake")
     hs_sub = hs_p.add_subparsers(dest="handshake_cmd", required=True)
 
-    hs_listen = hs_sub.add_parser("listen", help="Start handshake server (responder)")
+    hs_listen = hs_sub.add_parser("listen", parents=[parent], help="Start handshake server (responder)")
     hs_listen.add_argument("--port", type=int, default=9487, help="TCP port")
     hs_listen.add_argument("--host", default="127.0.0.1", help="Bind address")
     hs_listen.add_argument("--password", help="Passphrase for private key")
 
-    hs_connect = hs_sub.add_parser("connect", help="Connect to a handshake server")
+    hs_connect = hs_sub.add_parser("connect", parents=[parent], help="Connect to a handshake server")
     hs_connect.add_argument("target", help="host:port to connect to")
     hs_connect.add_argument("--password", help="Passphrase for private key")
     hs_connect.add_argument("--peer-did", help="Expected peer DID")
@@ -104,7 +111,17 @@ def main(argv: list[str] | None = None) -> int:
 def _dispatch(args: argparse.Namespace) -> int:
     """Route parsed args to the correct handler."""
     try:
-        if args.command == "init":
+        if getattr(args, "version", False):
+            print(f"hermes-id {VERSION}")
+            return 0
+
+        command = getattr(args, "command", None)
+        if not command:
+            print("Usage: hermes-id <command> [options]\n"
+                  "Run `hermes-id --help` for available commands.", file=sys.stderr)
+            return 2
+
+        if command == "init":
             return _cmd_init(args)
         elif args.command == "show":
             return _cmd_show(args)
@@ -259,15 +276,14 @@ def _cmd_sign(args: argparse.Namespace) -> int:
         password = getpass.getpass("Passphrase: ")
 
     try:
-        private_key = storage.unlock(password)
+        with storage.use_key(password) as private_key:
+            file_path = Path(args.file)
+            data = file_path.read_bytes()
+            signature = sign(private_key, data)
     except Exception as e:
         print(f"❌ Cannot unlock identity: {e}", file=sys.stderr)
         return 1
 
-    file_path = Path(args.file)
-    data = file_path.read_bytes()
-
-    signature = sign(private_key, data)
     sig_b64 = _b64(signature)
 
     # Write signature alongside file

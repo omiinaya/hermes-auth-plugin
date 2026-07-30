@@ -30,6 +30,7 @@ from hermes_id.crypto import (
     deserialize_private_key,
     encrypt_key,
     decrypt_key,
+    secure_zero,
 )
 from hermes_id.identity import (
     IdentityCard,
@@ -37,6 +38,40 @@ from hermes_id.identity import (
     verify_identity_card,
     format_identity_card,
 )
+
+
+# ---------------------------------------------------------------------------
+# Secure key context manager
+# ---------------------------------------------------------------------------
+
+class _KeyContext:
+    """Context manager for secure temporary key usage.
+
+    Returns the Ed25519 private key, then securely zeros the underlying
+    DER buffer on exit.  The ``cryptography`` object itself may survive
+    in Python's GC, but the serialized bytes we control are cleared.
+    """
+
+    def __init__(self, storage: "IdentityStorage", password: str):
+        self._storage = storage
+        self._password = password
+        self._key = None
+        self._der_bytes = None
+
+    def __enter__(self) -> ed25519.Ed25519PrivateKey:
+        encrypted = self._storage._read_private()
+        try:
+            self._der_bytes = decrypt_key(encrypted, self._password)
+            self._key = deserialize_private_key(self._der_bytes)
+        finally:
+            secure_zero(bytearray(encrypted))
+        return self._key
+
+    def __exit__(self, *exc_args) -> None:
+        if self._der_bytes is not None:
+            secure_zero(bytearray(self._der_bytes))
+            self._der_bytes = None
+        self._key = None
 
 
 # ---------------------------------------------------------------------------
@@ -174,11 +209,37 @@ class IdentityStorage:
             )
 
         encrypted = self._read_private()
-        private_key = deserialize_private_key(decrypt_key(encrypted, password))
+        decrypted_der = None
+        try:
+            decrypted_der = decrypt_key(encrypted, password)
+            private_key = deserialize_private_key(decrypted_der)
+        finally:
+            secure_zero(bytearray(encrypted))
+            if decrypted_der is not None:
+                secure_zero(bytearray(decrypted_der))
         return private_key
 
+    # ------------------------------------------------------------------
+    # Secure context manager for temporary key use
+    # ------------------------------------------------------------------
+
+    def use_key(self, password: str):
+        """Context manager that provides the private key and securely
+        clears any intermediate buffers on exit.
+
+        Usage::
+
+            with storage.use_key(password) as key:
+                sig = sign(key, b"message")
+                # key and temporary DER buffers are zeroed after exit
+        """
+        return _KeyContext(self, password)
+
+    # ------------------------------------------------------------------
+    # Public API (read-only)
+    # ------------------------------------------------------------------
+
     def get_identity_card(self) -> IdentityCard:
-        """Read the identity card from disk (no password needed)."""
         if not self._identity_path.exists():
             raise FileNotFoundError(
                 f"No identity card at {self._identity_path}. "

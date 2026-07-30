@@ -27,6 +27,7 @@ from hermes_id.crypto import (
     encrypt_key,
     decrypt_key,
     derive_session_key,
+    secure_zero,
 )
 from hermes_id.identity import (
     IdentityCard,
