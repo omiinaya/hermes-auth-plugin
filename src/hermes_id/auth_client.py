@@ -124,11 +124,13 @@ class AuthClient:
         resp.raise_for_status()
         return resp.json()
 
-    def sign_challenge(self, challenge_b64: str) -> str:
+    def sign_challenge(self, challenge_b64: str, password: Optional[str] = None) -> str:
         """Sign a challenge with the local identity's private key.
 
         Args:
             challenge_b64: The base64-encoded challenge from the server.
+            password: Optional passphrase override. If None, reads from
+                ``HERMES_ID_PASSPHRASE`` environment variable.
 
         Returns:
             Base64-encoded Ed25519 signature.
@@ -136,9 +138,10 @@ class AuthClient:
         if not self._storage:
             raise RuntimeError("No identity configured. Pass identity_dir to AuthClient.")
 
-        password = os.environ.get("HERMES_ID_PASSPHRASE") or ""
         if not password:
-            raise RuntimeError("HERMES_ID_PASSPHRASE not set in environment.")
+            password = os.environ.get("HERMES_ID_PASSPHRASE") or ""
+        if not password:
+            raise RuntimeError("HERMES_ID_PASSPHRASE not set in environment or password arg not provided.")
 
         challenge = _unb64(challenge_b64)
         with self._storage.use_key(password) as private_key:

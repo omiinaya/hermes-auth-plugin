@@ -1,0 +1,27 @@
+[Unit]
+Description=hermes-id Auth Server
+Documentation=https://github.com/omiinaya/hermes-id
+After=network.target
+
+[Service]
+Type=simple
+User=hermes-id
+Group=hermes-id
+WorkingDirectory=/opt/hermes-id
+EnvironmentFile=/opt/hermes-id/.env
+ExecStart=/usr/local/bin/hermes-id server --host 0.0.0.0 --port 9488 --dir /opt/hermes-id/identity --db /opt/hermes-id/data/agent_registry.db
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

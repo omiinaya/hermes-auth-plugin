@@ -47,6 +47,7 @@ all = [
 
 [project.scripts]
 hermes-id = "hermes_id.cli:main"
+hermes-id-admin = "hermes_id.admin_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

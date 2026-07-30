@@ -865,7 +865,7 @@ class AuthServer:
         def get_agent_status(did: str, x_admin_key: str = Header("")):
             """Check an agent's registration and approval status. Requires admin key."""
             require_admin(x_admin_key)
-            return self._agent_status_internal(did)
+            return _agent_status_internal(did)
 
         def _agent_status_internal(did: str) -> dict:
             """Internal helper for agent status lookup."""

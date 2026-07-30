@@ -44,16 +44,20 @@ CLI = _find_cli()
 
 
 def _run(*args: str, input_text: str = "") -> subprocess.CompletedProcess:
-    """Run hermes-id CLI and return result."""
+    """Run hermes-id CLI and return result, isolating from env vars."""
     cmd = [sys.executable, CLI] if CLI.endswith(".py") else [CLI]
     cmd.extend(args)
+    # Ensure subprocess doesn't inherit HERMES_ID_PASSPHRASE which could
+    # conflict with test-specific passwords
+    env = os.environ.copy()
+    env.pop("HERMES_ID_PASSPHRASE", None)
     return subprocess.run(
         cmd,
         capture_output=True,
         text=True,
-        timeout=30,
         input=input_text,
-        env={**os.environ, "HERMES_HOME": os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))},
+        timeout=30,
+        env=env,
     )
 
 

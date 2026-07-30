@@ -1,0 +1,347 @@
+"""Tests for the hermes-id Auth Server (FastAPI)."""
+
+import json
+import os
+import threading
+import time
+from pathlib import Path
+
+import httpx
+import pytest
+
+from hermes_id.auth_client import AuthClient
+from hermes_id.crypto import _b64, generate_challenge, sign
+from hermes_id.identity import IdentityCard, create_identity
+from hermes_id.storage import IdentityStorage
+
+
+_TEST_PASSWORD = "hermes-id-test-password-2026"
+
+# Set the test password in the environment so AuthClient can find it
+os.environ["HERMES_ID_PASSPHRASE"] = _TEST_PASSWORD
+
+@pytest.fixture(scope="module")
+def server_identity(tmp_path_factory):
+    """Create a standalone identity for the test server."""
+    identity_dir = tmp_path_factory.mktemp("server-identity")
+    storage = IdentityStorage(directory=str(identity_dir))
+    storage.create(_TEST_PASSWORD, metadata={"profile": "test-server"})
+    return str(identity_dir)
+
+
+@pytest.fixture(scope="module")
+def client_identity(tmp_path_factory):
+    """Create an identity for a test agent."""
+    identity_dir = tmp_path_factory.mktemp("client-identity")
+    storage = IdentityStorage(directory=str(identity_dir))
+    storage.create(_TEST_PASSWORD, metadata={"profile": "test-agent"})
+    return str(identity_dir)
+
+
+@pytest.fixture(scope="module")
+def auth_server(server_identity, tmp_path_factory):
+    """Start the auth server in a background thread."""
+    db_path = tmp_path_factory.mktemp("data") / "test_registry.db"
+    from hermes_id.server import AuthServer
+
+    admin_key = "test-admin-key-for-tests"
+    server = AuthServer(
+        identity_dir=server_identity,
+        db_path=str(db_path),
+        token_ttl=3600,
+        challenge_ttl=60,
+        admin_key=admin_key,
+        cors_origins=["*"],
+        rate_limit_max=100,
+    )
+
+    port = 9495
+    import uvicorn
+    t = threading.Thread(
+        target=lambda: uvicorn.run(server.app, host="127.0.0.1", port=port, log_level="error"),
+        daemon=True,
+    )
+    t.start()
+    time.sleep(2)
+
+    yield {"port": port, "db_path": db_path, "admin_key": admin_key, "server": server}
+
+    if db_path.exists():
+        db_path.unlink()
+
+
+@pytest.fixture
+def server_url(auth_server):
+    return f"http://127.0.0.1:{auth_server['port']}"
+
+
+@pytest.fixture
+def admin_client(server_url):
+    return AuthClient(server_url, admin_key="test-admin-key-for-tests")
+
+
+@pytest.fixture
+def agent_client(server_url, client_identity):
+    return AuthClient(server_url, identity_dir=client_identity)
+
+
+@pytest.fixture(autouse=True)
+def register_and_approve(agent_client, admin_client):
+    """Ensure the test agent is registered and approved before each test."""
+    card = agent_client._storage.get_identity_card()
+    try:
+        agent_client.register_agent(card.id, display_name="Test Agent")
+    except httpx.HTTPStatusError:
+        pass  # already registered
+    try:
+        admin_client.approve_agent(card.id)
+    except httpx.HTTPStatusError:
+        pass  # already approved
+    yield
+
+
+# ---------------------------------------------------------------------------
+# Health & Identity
+# ---------------------------------------------------------------------------
+
+class TestServerHealth:
+    def test_health(self, server_url):
+        client = AuthClient(server_url)
+        h = client.health()
+        assert h["status"] == "ok"
+        assert h["did"].startswith("did:hermes:")
+
+    def test_identity(self, server_url):
+        client = AuthClient(server_url)
+        identity = client.get_identity()
+        assert identity["id"].startswith("did:hermes:")
+        assert "verification_method" in identity
+        assert "proof" in identity
+
+
+# ---------------------------------------------------------------------------
+# Agent Registry
+# ---------------------------------------------------------------------------
+
+class TestAgentRegistry:
+    def test_list_agents(self, admin_client):
+        agents = admin_client.list_agents()
+        assert agents["total"] >= 1
+        assert "page" in agents
+        assert "pages" in agents
+
+    def test_register_duplicate_fails(self, agent_client):
+        card = agent_client._storage.get_identity_card()
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            agent_client.register_agent(card.id)
+        assert exc.value.response.status_code == 409
+
+    def test_approve_twice_fails(self, agent_client, admin_client):
+        card = agent_client._storage.get_identity_card()
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            admin_client.approve_agent(card.id)
+        assert exc.value.response.status_code == 409
+
+    def test_get_status(self, admin_client, agent_client):
+        card = agent_client._storage.get_identity_card()
+        status = admin_client.get_agent_status(card.id)
+        assert status["did"] == card.id
+        assert status["status"] in ("approved", "pending")
+
+    def test_admin_key_required(self, server_url):
+        client_no_key = AuthClient(server_url)
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            client_no_key.approve_agent("did:hermes:fake")
+        assert exc.value.response.status_code == 403
+
+    def test_search_agents(self, admin_client):
+        agents = admin_client.list_agents(search="Test")
+        assert agents["total"] >= 1
+
+    def test_list_pagination(self, admin_client):
+        agents = admin_client.list_agents(page=1, page_size=10)
+        assert agents["page"] == 1
+        assert agents["page_size"] == 10
+
+    def test_delete_agent(self, server_url):
+        import tempfile
+        tmp_dir = tempfile.mkdtemp()
+        tmp_storage = IdentityStorage(directory=tmp_dir)
+        tmp_storage.create("tmp-pass-delete", metadata={"profile": "tmp"})
+        tmp_card = tmp_storage.get_identity_card()
+
+        tmp_client = AuthClient(server_url, identity_dir=tmp_dir)
+        admin = AuthClient(server_url, admin_key="test-admin-key-for-tests")
+
+        tmp_client.register_agent(tmp_card.id, display_name="To Delete")
+        admin.approve_agent(tmp_card.id)
+        r = admin.delete_agent(tmp_card.id)
+        assert r["status"] == "deleted"
+
+
+# ---------------------------------------------------------------------------
+# Authentication Flow
+# ---------------------------------------------------------------------------
+
+class TestAuthentication:
+    def test_challenge(self, agent_client):
+        card = agent_client._storage.get_identity_card()
+        chal = agent_client.challenge(card.id)
+        assert "challenge_b64" in chal
+        assert "expires_at" in chal
+        assert chal["server_did"].startswith("did:hermes:")
+
+    def test_full_auth_flow(self, agent_client):
+        card = agent_client._storage.get_identity_card()
+        chal = agent_client.challenge(card.id)
+        sig = agent_client.sign_challenge(chal["challenge_b64"])
+        result = agent_client.authenticate(card.id, chal["challenge_b64"], sig)
+        assert "token" in result
+        assert "token_id" in result
+        assert result["did"] == card.id
+
+    def test_verify_token(self, agent_client):
+        card = agent_client._storage.get_identity_card()
+        chal = agent_client.challenge(card.id)
+        sig = agent_client.sign_challenge(chal["challenge_b64"])
+        result = agent_client.authenticate(card.id, chal["challenge_b64"], sig)
+        v = agent_client.verify_token(result["token"])
+        assert v is not None
+        assert v["valid"] is True
+        assert v["did"] == card.id
+
+    def test_refresh_token(self, agent_client):
+        card = agent_client._storage.get_identity_card()
+        chal = agent_client.challenge(card.id)
+        sig = agent_client.sign_challenge(chal["challenge_b64"])
+        result = agent_client.authenticate(card.id, chal["challenge_b64"], sig)
+        refreshed = agent_client.refresh_token(result["token"])
+        assert refreshed is not None
+        assert "token" in refreshed
+        assert refreshed["did"] == card.id
+
+    def test_revoke_and_verify_fails(self, agent_client):
+        card = agent_client._storage.get_identity_card()
+        chal = agent_client.challenge(card.id)
+        sig = agent_client.sign_challenge(chal["challenge_b64"])
+        result = agent_client.authenticate(card.id, chal["challenge_b64"], sig)
+        assert agent_client.revoke_token(result["token"]) is True
+        v = agent_client.verify_token(result["token"])
+        assert v is None or v.get("valid") is False
+
+    def test_tampered_token_fails(self, agent_client):
+        card = agent_client._storage.get_identity_card()
+        chal = agent_client.challenge(card.id)
+        sig = agent_client.sign_challenge(chal["challenge_b64"])
+        result = agent_client.authenticate(card.id, chal["challenge_b64"], sig)
+        parts = result["token"].split(".")
+        tampered = parts[0] + "." + parts[1][:-5] + "AAAAA"
+        v = agent_client.verify_token(tampered)
+        assert v is None or v.get("valid") is False
+
+    def test_bad_signature_rejected(self, agent_client):
+        card = agent_client._storage.get_identity_card()
+        chal = agent_client.challenge(card.id)
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            agent_client.authenticate(card.id, chal["challenge_b64"], "AAAAAA")
+        assert exc.value.response.status_code in (400, 401)
+
+
+# ---------------------------------------------------------------------------
+# Authorization (access control)
+# ---------------------------------------------------------------------------
+
+class TestAuthorization:
+    def test_unregistered_agent_fails(self, server_url):
+        """An agent not in the registry should fail auth. Sign manually."""
+        import tempfile
+        from hermes_id.crypto import _b64, sign as ed_sign
+
+        tmp_dir = tempfile.mkdtemp()
+        tmp_storage = IdentityStorage(directory=tmp_dir)
+        tmp_storage.create("tmp-pass-unauth")
+        tmp_card = tmp_storage.get_identity_card()
+
+        # Sign the challenge manually (different password from env)
+        unauth_client = AuthClient(server_url)  # no identity_dir
+        chal = unauth_client.challenge(tmp_card.id)
+
+        import os as _os
+        with tmp_storage.use_key("tmp-pass-unauth") as pk:
+            from hermes_id.crypto import _unb64 as _ub
+            sig = ed_sign(pk, _ub(chal["challenge_b64"]))
+
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            unauth_client.authenticate(
+                tmp_card.id, chal["challenge_b64"], _b64(sig),
+                identity_card=tmp_card.to_json(),
+            )
+        assert exc.value.response.status_code == 403
+
+    def test_denied_agent_fails(self, server_url, admin_client):
+        """A denied agent should fail auth. Sign manually."""
+        import tempfile
+        from hermes_id.crypto import _b64, sign as ed_sign, _unb64 as _ub
+
+        tmp_dir = tempfile.mkdtemp()
+        tmp_storage = IdentityStorage(directory=tmp_dir)
+        tmp_storage.create("tmp-pass-denied")
+        tmp_card = tmp_storage.get_identity_card()
+
+        tmp_client = AuthClient(server_url)  # no identity_dir
+        tmp_client.register_agent(
+            tmp_card.id, identity_card=tmp_card.to_json(), display_name="To Deny"
+        )
+        admin_client.deny_agent(tmp_card.id)
+
+        chal = tmp_client.challenge(tmp_card.id)
+        with tmp_storage.use_key("tmp-pass-denied") as pk:
+            sig = ed_sign(pk, _ub(chal["challenge_b64"]))
+
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            tmp_client.authenticate(
+                tmp_card.id, chal["challenge_b64"], _b64(sig),
+                identity_card=tmp_card.to_json(),
+            )
+        assert exc.value.response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# AuthFlow convenience
+# ---------------------------------------------------------------------------
+
+class TestAuthFlow:
+    def test_login(self, server_url, client_identity, admin_client):
+        from hermes_id.auth_client import AuthFlow
+
+        auth_cli = AuthClient(server_url, identity_dir=client_identity)
+        card = auth_cli._storage.get_identity_card()
+        try:
+            auth_cli.register_agent(card.id)
+        except httpx.HTTPStatusError:
+            pass
+        try:
+            admin_client.approve_agent(card.id)
+        except httpx.HTTPStatusError:
+            pass
+        auth_cli.close()
+
+        flow = AuthFlow(server_url, identity_dir=client_identity)
+        token, result = flow.login()
+        assert len(token) > 20
+        assert result["did"] == card.id
+        flow.close()
+
+    def test_login_round_trip(self, server_url, client_identity, admin_client):
+        """Full round-trip: login, verify, verify via server."""
+        from hermes_id.auth_client import AuthFlow
+
+        flow = AuthFlow(server_url, identity_dir=client_identity)
+        token, _ = flow.login()
+        flow.close()
+
+        client = AuthClient(server_url)
+        v = client.verify_token(token)
+        assert v is not None
+        assert v["valid"] is True
+        client.close()

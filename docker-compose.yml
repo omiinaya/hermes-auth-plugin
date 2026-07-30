@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  hermes-id-auth:
+    build: .
+    container_name: hermes-id-auth
+    ports:
+      - "9488:9488"
+    environment:
+      - HERMES_ID_PASSPHRASE=${HERMES_ID_PASSPHRASE:?Set HERMES_ID_PASSPHRASE}
+      - HERMES_ID_ADMIN_KEY=${HERMES_ID_ADMIN_KEY:-}
+    volumes:
+      - ./identity:/app/identity
+      - ./data:/app/data
+    restart: unless-stopped
