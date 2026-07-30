@@ -14,14 +14,15 @@ Endpoints
     POST /challenge         → Generate a random challenge nonce
     POST /authenticate      → Prove identity via signature → get signed token
     POST /verify            → Verify a signed auth token
+    POST /token/refresh     → Refresh an expiring token
 
   Agent Registry (admin)
-    GET    /agents                      → List all registered agents
-    POST   /agents/register             → Self-register with identity card
-    POST   /agents/{did}/approve        → Admin approves agent
-    POST   /agents/{did}/deny           → Admin denies agent
-    GET    /agents/{did}/status         → Check agent approval status
-    DELETE /agents/{did}                → Remove agent from registry
+    GET    /agents                     → List agents (supports ?status=, ?page=, ?search=)
+    POST   /agents/register            → Self-register with identity card
+    POST   /agents/{did}/approve       → Admin approves agent
+    POST   /agents/{did}/deny          → Admin denies agent
+    GET    /agents/{did}/status        → Check agent approval status
+    DELETE /agents/{did}               → Remove agent (requires admin key)
 
 Authorization Flow
 ------------------
@@ -33,15 +34,24 @@ Authorization Flow
      → Server returns a signed auth token (Ed25519-signed JSON)
   5. Agent presents the token to any spacetime-x service
   6. Service calls POST /verify to check the token
+
+Admin Authentication
+--------------------
+  Admin endpoints (approve, deny, delete) require the ``X-Admin-Key`` header.
+  Set ``HERMES_ID_ADMIN_KEY`` in the environment. If unset, a random key is
+  generated and printed at startup.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
+import secrets
 import sqlite3
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,8 +60,9 @@ from urllib.parse import urljoin
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from hermes_id.crypto import (
@@ -69,15 +80,24 @@ from hermes_id.identity import (
 from hermes_id.storage import IdentityStorage
 
 # ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+_logger = logging.getLogger("hermes-id.server")
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 _DEFAULT_PORT = 9488      # one up from the handshake port (9487)
 _DEFAULT_HOST = "0.0.0.0"
 _TOKEN_TTL = 3600 * 24    # 24 hours default token lifetime
+_REFRESH_TOKEN_TTL = 3600 * 24 * 7  # 7 days for refresh tokens
 _CHALLENGE_TTL = 300       # 5 minutes for challenge nonces
+_PAGE_SIZE = 50           # default page size for agent list
 
 _AGENT_REGISTRY_DB = "agent_registry.db"
+_INVALIDATED_TOKENS_DB = "invalidated_tokens.db"
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -97,11 +117,15 @@ class AuthenticateRequest(BaseModel):
     signature_b64: str
     identity_card: str  # JSON-encoded identity card for this DID
 
+class TokenRefreshRequest(BaseModel):
+    token: str
+
 class AuthTokenData(BaseModel):
     did: str
     issuer: str
     issued_at: float
     expires_at: float
+    token_id: str = ""  # unique token ID for blacklisting
     purpose: str = "auth"
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -126,12 +150,38 @@ class AgentStatus(BaseModel):
     status: str  # "pending", "approved", "denied"
     display_name: str = ""
     registered_at: str = ""
+    updated_at: str = ""
     approved_at: str = ""
-    identity_card: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class ApproveRequest(BaseModel):
-    admin_token: str = ""
+class RevokeRequest(BaseModel):
+    token: str
+
+# ---------------------------------------------------------------------------
+# Rate limiter (in-memory, simple token bucket)
+# ---------------------------------------------------------------------------
+
+class RateLimiter:
+    """Simple sliding-window rate limiter per IP."""
+
+    def __init__(self, max_requests: int = 30, window_seconds: float = 60.0):
+        self._max = max_requests
+        self._window = window_seconds
+        self._buckets: dict[str, list[float]] = defaultdict(list)
+
+    def check(self, client_ip: str) -> bool:
+        now = time.time()
+        cutoff = now - self._window
+        bucket = self._buckets[client_ip]
+        # Prune old entries
+        while bucket and bucket[0] < cutoff:
+            bucket.pop(0)
+        bucket.append(now)
+        return len(bucket) <= self._max
+
+    def reset(self, client_ip: str) -> None:
+        self._buckets.pop(client_ip, None)
+
 
 # ---------------------------------------------------------------------------
 # Auth Server
@@ -156,35 +206,94 @@ class AuthServer:
         db_path: Optional[str] = None,
         token_ttl: int = _TOKEN_TTL,
         challenge_ttl: int = _CHALLENGE_TTL,
+        admin_key: Optional[str] = None,
+        cors_origins: Optional[list[str]] = None,
+        rate_limit_max: int = 30,
+        rate_limit_window: float = 60.0,
     ):
         self._storage = IdentityStorage(directory=identity_dir)
         self._token_ttl = token_ttl
         self._challenge_ttl = challenge_ttl
 
-        # SQLite for agent registry
-        self._db_path = Path(db_path or _AGENT_REGISTRY_DB)
-        self._ensure_registry_db()
+        # Admin key
+        self._admin_key = admin_key or os.environ.get("HERMES_ID_ADMIN_KEY", "")
+        if not self._admin_key:
+            self._admin_key = secrets.token_urlsafe(32)
+            _logger.warning(
+                "No admin key set via HERMES_ID_ADMIN_KEY or constructor. "
+                "Generated random key: %s", self._admin_key[:16] + "..."
+            )
 
-        # In-memory challenge store: did -> {"challenge": bytes, "expires": float}
+        # SQLite databases
+        self._db_path = Path(db_path or _AGENT_REGISTRY_DB)
+        self._invalidation_db_path = self._db_path.parent / _INVALIDATED_TOKENS_DB
+        self._ensure_registry_db()
+        self._ensure_invalidation_db()
+
+        # In-memory stores
         self._challenges: dict[str, dict[str, Any]] = {}
+        self._rate_limiter = RateLimiter(max_requests=rate_limit_max, window_seconds=rate_limit_window)
+
+        # Logging
+        self._log = _logger
 
         # Build FastAPI app
         self.app = FastAPI(
             title="hermes-id Auth Server",
-            version="1.0.0",
-            description="Self-Sovereign Identity for agents — challenge-response auth, token issuance, and agent registry.",
+            version="1.1.0",
+            description=(
+                "Self-Sovereign Identity for agents — challenge-response auth, "
+                "token issuance, agent registry with approval workflow."
+            ),
+            docs_url="/docs",
+            redoc_url="/redoc",
         )
+
+        # CORS
+        origins = cors_origins or os.environ.get(
+            "HERMES_ID_CORS_ORIGINS", "*"
+        ).split(",")
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=origins,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=["X-Request-Id"],
         )
+
+        # Exception handler for consistent error responses
+        @self.app.exception_handler(HTTPException)
+        async def http_exception_handler(request: Request, exc: HTTPException):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": exc.detail, "code": exc.status_code},
+            )
+
         self._register_routes()
+        self._log.info("AuthServer initialized (DID will be logged on first request)")
 
     # ------------------------------------------------------------------
-    # Database
+    # Rate limiting dependency
+    # ------------------------------------------------------------------
+
+    def _check_rate_limit(self, request: Request) -> None:
+        client_ip = request.client.host if request.client else "unknown"
+        if not self._rate_limiter.check(client_ip):
+            raise HTTPException(429, "Too many requests. Try again later.")
+
+    # ------------------------------------------------------------------
+    # Admin auth dependency
+    # ------------------------------------------------------------------
+
+    def _require_admin(self, x_admin_key: str = Header("")) -> None:
+        if not x_admin_key or x_admin_key != self._admin_key:
+            raise HTTPException(
+                403, "Invalid or missing admin key. Provide X-Admin-Key header."
+            )
+
+    # ------------------------------------------------------------------
+    # Databases
     # ------------------------------------------------------------------
 
     def _ensure_registry_db(self) -> None:
@@ -198,15 +307,40 @@ class AuthServer:
                 status TEXT NOT NULL DEFAULT 'pending',
                 display_name TEXT DEFAULT '',
                 registered_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
                 approved_at TEXT,
                 metadata TEXT DEFAULT '{}'
             )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)
+        """)
+        conn.commit()
+        conn.close()
+
+    def _ensure_invalidation_db(self) -> None:
+        """Create the token invalidation database."""
+        self._invalidation_db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self._invalidation_db_path))
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS invalidated_tokens (
+                token_id TEXT PRIMARY KEY,
+                did TEXT NOT NULL,
+                invalidated_at REAL NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_invalidated_did
+            ON invalidated_tokens(did)
         """)
         conn.commit()
         conn.close()
 
     def _db_connect(self) -> sqlite3.Connection:
         return sqlite3.connect(str(self._db_path))
+
+    def _invalidation_db_connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(str(self._invalidation_db_path))
 
     # ------------------------------------------------------------------
     # Token operations
@@ -237,17 +371,15 @@ class AuthServer:
         payload_json = json.dumps(payload, separators=(",", ":"))
         payload_bytes = payload_json.encode("utf-8")
         signature = sign(private_key, payload_bytes)
-        token = _b64(payload_bytes) + "." + _b64(signature)
-        return token
+        return _b64(payload_bytes) + "." + _b64(signature)
 
-    def verify_token(self, token: str) -> Optional[dict[str, Any]]:
-        """Verify an Ed25519-signed auth token.
+    def _parse_token(self, token: str) -> Optional[dict[str, Any]]:
+        """Parse and verify the token signature and expiration.
 
         Returns the payload dict if valid, None otherwise.
+        Does NOT check blacklist — call :meth:`_is_token_invalidated` separately.
         """
         try:
-            _, _, card = self._get_keypair()
-            # Parse: payload_b64.signature_b64
             parts = token.split(".")
             if len(parts) != 2:
                 return None
@@ -255,14 +387,14 @@ class AuthServer:
             payload_bytes = _unb64(payload_b64)
             signature_bytes = _unb64(sig_b64)
 
-            # Get public key from the identity card
+            # Get the server's public key from the identity card
+            _, _, card = self._get_keypair()
             pub_b64 = card.public_key_multibase
             if not pub_b64:
                 return None
             pub_raw = _unb64(pub_b64[1:])  # strip multibase prefix 'u'
             public_key = ed25519.Ed25519PublicKey.from_public_bytes(pub_raw)
 
-            # Verify
             try:
                 public_key.verify(signature_bytes, payload_bytes)
             except InvalidSignature:
@@ -278,24 +410,92 @@ class AuthServer:
         except Exception:
             return None
 
+    def verify_token(self, token: str) -> Optional[dict[str, Any]]:
+        """Verify a token, including checking the invalidation list.
+
+        Returns the payload dict if valid, None otherwise.
+        """
+        payload = self._parse_token(token)
+        if payload is None:
+            return None
+
+        # Check blacklist
+        token_id = payload.get("token_id", "")
+        if token_id and self._is_token_invalidated(token_id):
+            return None
+
+        return payload
+
+    def _is_token_invalidated(self, token_id: str) -> bool:
+        """Check if a token_id has been invalidated."""
+        conn = self._invalidation_db_connect()
+        try:
+            row = conn.execute(
+                "SELECT token_id FROM invalidated_tokens WHERE token_id = ?",
+                (token_id,),
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+
+    def _invalidate_token(self, token_id: str, did: str) -> None:
+        """Add a token to the invalidation list."""
+        conn = self._invalidation_db_connect()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO invalidated_tokens (token_id, did, invalidated_at) VALUES (?, ?, ?)",
+                (token_id, did, time.time()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _generate_token_id(self) -> str:
+        return secrets.token_urlsafe(16)
+
     # ------------------------------------------------------------------
     # Routes
     # ------------------------------------------------------------------
 
     def _register_routes(self) -> None:
         app = self.app
+        rate_limit = self._check_rate_limit
+        require_admin = self._require_admin
+
+        # ------------------------------------------------------------------
+        # Identity
+        # ------------------------------------------------------------------
 
         @app.get("/identity")
         def get_identity():
             """Return the server's identity card."""
             card = self._storage.get_identity_card()
+            if not card:
+                raise HTTPException(500, "Server identity not configured")
             return json.loads(card.to_json())
 
+        @app.get("/health")
+        def health():
+            """Health check — returns server DID and status."""
+            card = self._storage.get_identity_card()
+            return {
+                "status": "ok",
+                "did": card.id if card else "unconfigured",
+                "version": "1.1.0",
+                "uptime": time.time(),
+            }
+
+        # ------------------------------------------------------------------
+        # Authentication
+        # ------------------------------------------------------------------
+
         @app.post("/challenge")
-        def create_challenge(req: ChallengeRequest):
-            """Generate a random challenge for a DID."""
+        def create_challenge(req: ChallengeRequest, request: Request):
+            """Generate a random challenge for a DID. Rate-limited."""
+            rate_limit(request)
+
             if not req.did.startswith("did:"):
-                raise HTTPException(400, "Invalid DID format")
+                raise HTTPException(400, "Invalid DID format — must start with 'did:'")
 
             challenge = generate_challenge()
             challenge_b64 = _b64(challenge)
@@ -309,6 +509,8 @@ class AuthServer:
 
             _, _, card = self._get_keypair()
 
+            self._log.info("Challenge issued for DID=%s", req.did)
+
             return ChallengeResponse(
                 challenge_b64=challenge_b64,
                 expires_at=expires_at,
@@ -316,22 +518,14 @@ class AuthServer:
             )
 
         @app.post("/authenticate")
-        def authenticate(req: AuthenticateRequest):
-            """Verify a signature and issue a signed auth token.
+        def authenticate(req: AuthenticateRequest, request: Request):
+            """Verify a signature and issue a signed auth token. Rate-limited."""
+            rate_limit(request)
 
-            Steps:
-            1. Look up the challenge for this DID
-            2. Verify the challenge hasn't expired
-            3. Decode the provided identity card
-            4. Verify the identity card's self-signature
-            5. Check the agent is approved in the registry
-            6. Verify the challenge signature using the card's public key
-            7. Issue a signed auth token
-            """
-            # 1. Get challenge
+            # 1. Get challenge (one-time use)
             challenge_entry = self._challenges.pop(req.did, None)
             if not challenge_entry:
-                raise HTTPException(400, "No challenge found. Call /challenge first.")
+                raise HTTPException(400, "No challenge found. Call POST /challenge first.")
 
             # 2. Check expiration
             if challenge_entry["expires_at"] < time.time():
@@ -348,12 +542,18 @@ class AuthServer:
             if not verify_identity_card(card):
                 raise HTTPException(401, "Identity card self-signature is invalid")
 
-            # 5. Check agent is approved in registry
+            # 5. Check DID matches
+            if card.id != req.did:
+                raise HTTPException(400, "DID in identity card doesn't match request DID")
+
+            # 6. Check agent is approved in registry
             conn = self._db_connect()
-            row = conn.execute(
-                "SELECT status FROM agents WHERE did = ?", (req.did,)
-            ).fetchone()
-            conn.close()
+            try:
+                row = conn.execute(
+                    "SELECT status FROM agents WHERE did = ?", (req.did,)
+                ).fetchone()
+            finally:
+                conn.close()
 
             if not row:
                 raise HTTPException(
@@ -366,14 +566,13 @@ class AuthServer:
                     f"Agent status is '{row[0]}'. Admin must approve first.",
                 )
 
-            # 6. Verify challenge signature
+            # 7. Verify challenge signature
             challenge = challenge_entry["challenge"]
             try:
                 sig_bytes = _unb64(req.signature_b64)
             except Exception as e:
                 raise HTTPException(400, f"Invalid signature encoding: {e}")
 
-            # Recover public key from identity card
             pub_b64 = card.public_key_multibase
             if not pub_b64:
                 raise HTTPException(400, "Identity card has no public key")
@@ -386,24 +585,40 @@ class AuthServer:
             if not verify(public_key, challenge, sig_bytes):
                 raise HTTPException(401, "Challenge signature invalid")
 
-            # 7. Issue token
+            # 8. Issue token
             now = time.time()
+            token_id = self._generate_token_id()
             payload = AuthTokenData(
                 did=req.did,
                 issuer=self._storage.get_identity_card().id,
                 issued_at=now,
                 expires_at=now + self._token_ttl,
+                token_id=token_id,
                 purpose="auth",
             )
-            token = self._sign_token(payload.model_dump())
-            return {"token": token, "expires_at": payload.expires_at, "did": req.did}
+            token_str = self._sign_token(payload.model_dump())
+
+            self._log.info(
+                "Token issued for DID=%s token_id=%s expires_at=%s",
+                req.did, token_id, payload.expires_at,
+            )
+
+            return {
+                "token": token_str,
+                "token_id": token_id,
+                "expires_at": payload.expires_at,
+                "did": req.did,
+            }
 
         @app.post("/verify")
         def verify_endpoint(req: VerifyRequest):
             """Verify a signed auth token."""
             payload = self.verify_token(req.token)
             if payload is None:
-                return VerifyResponse(valid=False, error="Token invalid or expired")
+                return VerifyResponse(
+                    valid=False,
+                    error="Token invalid, expired, or revoked",
+                )
             return VerifyResponse(
                 valid=True,
                 did=payload.get("did", ""),
@@ -411,47 +626,133 @@ class AuthServer:
                 expires_at=payload.get("expires_at", 0),
             )
 
+        @app.post("/token/refresh")
+        def refresh_token(req: TokenRefreshRequest):
+            """Refresh an expiring token. Issues a new token with a fresh TTL.
+
+            The old token must still be valid. The new token extends by the
+            configured ``token_ttl`` (default 24h) from the current time.
+            """
+            payload = self.verify_token(req.token)
+            if payload is None:
+                raise HTTPException(401, "Token invalid, expired, or revoked")
+
+            # Cannot refresh beyond the max refresh window
+            issued_at = payload.get("issued_at", 0)
+            if time.time() - issued_at > _REFRESH_TOKEN_TTL:
+                raise HTTPException(
+                    401, "Token too old to refresh. Please re-authenticate."
+                )
+
+            now = time.time()
+            new_token_id = self._generate_token_id()
+            new_payload = AuthTokenData(
+                did=payload["did"],
+                issuer=payload["issuer"],
+                issued_at=now,
+                expires_at=now + self._token_ttl,
+                token_id=new_token_id,
+                purpose="auth",
+            )
+            new_token = self._sign_token(new_payload.model_dump())
+
+            self._log.info("Token refreshed for DID=%s new_token_id=%s", payload["did"], new_token_id)
+
+            return {
+                "token": new_token,
+                "token_id": new_token_id,
+                "expires_at": new_payload.expires_at,
+                "did": payload["did"],
+            }
+
+        @app.post("/token/revoke")
+        def revoke_token(req: RevokeRequest):
+            """Revoke a token before it expires."""
+            payload = self._parse_token(req.token)
+            if payload is None:
+                # Token is already invalid for some reason — still return success
+                # to avoid leaking whether a token_id was valid
+                return {"status": "revoked"}
+
+            token_id = payload.get("token_id", "")
+            if token_id:
+                self._invalidate_token(token_id, payload.get("did", ""))
+                self._log.info("Token revoked: token_id=%s did=%s", token_id, payload.get("did"))
+
+            return {"status": "revoked"}
+
         # ------------------------------------------------------------------
-        # Agent Registry endpoints
+        # Agent Registry
         # ------------------------------------------------------------------
 
         @app.get("/agents")
         def list_agents(
             status: Optional[str] = Query(None, pattern="^(pending|approved|denied)$"),
+            page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+            page_size: int = Query(_PAGE_SIZE, ge=1, le=200, alias="page_size"),
+            search: Optional[str] = Query(None, min_length=1, max_length=100),
+            x_admin_key: str = Header(""),
         ):
-            """List all registered agents. Optionally filter by status."""
-            conn = self._db_connect()
-            if status:
-                rows = conn.execute(
-                    "SELECT did, status, display_name, registered_at, approved_at, identity_card, metadata FROM agents WHERE status = ?",
-                    (status,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT did, status, display_name, registered_at, approved_at, identity_card, metadata FROM agents"
-                ).fetchall()
-            conn.close()
+            """List all registered agents. Requires admin key."""
+            require_admin(x_admin_key)
 
-            agents = []
-            for row in rows:
-                agents.append({
-                    "did": row[0],
-                    "status": row[1],
-                    "display_name": row[2],
-                    "registered_at": row[3],
-                    "approved_at": row[4],
-                    "has_identity_card": bool(row[5]),
-                    "metadata": json.loads(row[6]) if row[6] else {},
-                })
-            return {"agents": agents, "count": len(agents)}
+            conn = self._db_connect()
+            try:
+                conditions: list[str] = []
+                params: list[Any] = []
+
+                if status:
+                    conditions.append("status = ?")
+                    params.append(status)
+
+                if search:
+                    conditions.append("(did LIKE ? OR display_name LIKE ?)")
+                    params.extend([f"%{search}%", f"%{search}%"])
+
+                where_clause = ""
+                if conditions:
+                    where_clause = "WHERE " + " AND ".join(conditions)
+
+                # Count total
+                count_row = conn.execute(
+                    f"SELECT COUNT(*) FROM agents {where_clause}", params
+                ).fetchone()
+                total = count_row[0] if count_row else 0
+
+                # Fetch page
+                offset = (page - 1) * page_size
+                rows = conn.execute(
+                    f"SELECT did, status, display_name, registered_at, updated_at, approved_at, metadata FROM agents {where_clause} ORDER BY registered_at DESC LIMIT ? OFFSET ?",
+                    params + [page_size, offset],
+                ).fetchall()
+
+                agents = []
+                for row in rows:
+                    agents.append({
+                        "did": row[0],
+                        "status": row[1],
+                        "display_name": row[2],
+                        "registered_at": row[3],
+                        "updated_at": row[4],
+                        "approved_at": row[5],
+                        "metadata": json.loads(row[6]) if row[6] else {},
+                    })
+            finally:
+                conn.close()
+
+            return {
+                "agents": agents,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "pages": (total + page_size - 1) // page_size if total > 0 else 0,
+            }
 
         @app.post("/agents/register")
-        def register_agent(req: RegisterRequest):
-            """Self-register an agent with its identity card.
+        def register_agent(req: RegisterRequest, request: Request):
+            """Self-register an agent with its identity card. Rate-limited."""
+            rate_limit(request)
 
-            The agent presents its DID and identity card. The server stores
-            it in the registry with status='pending' until an admin approves.
-            """
             # Validate DID matches identity card
             try:
                 card_data = json.loads(req.identity_card)
@@ -467,26 +768,28 @@ class AuthServer:
                 raise HTTPException(400, "Identity card self-signature is invalid")
 
             conn = self._db_connect()
+            try:
+                # Check if already registered
+                existing = conn.execute(
+                    "SELECT status FROM agents WHERE did = ?", (req.did,)
+                ).fetchone()
+                if existing:
+                    raise HTTPException(
+                        409,
+                        f"Agent already registered with status '{existing[0]}'",
+                    )
 
-            # Check if already registered
-            existing = conn.execute(
-                "SELECT status FROM agents WHERE did = ?", (req.did,)
-            ).fetchone()
-            if existing:
-                conn.close()
-                raise HTTPException(
-                    409,
-                    f"Agent already registered with status '{existing[0]}'",
+                now = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    """INSERT INTO agents (did, identity_card, status, display_name, registered_at, updated_at, metadata)
+                       VALUES (?, ?, 'pending', ?, ?, ?, ?)""",
+                    (req.did, req.identity_card, req.display_name, now, now, json.dumps(req.metadata)),
                 )
+                conn.commit()
+            finally:
+                conn.close()
 
-            now = datetime.now(timezone.utc).isoformat()
-            conn.execute(
-                """INSERT INTO agents (did, identity_card, status, display_name, registered_at, metadata)
-                   VALUES (?, ?, 'pending', ?, ?, ?)""",
-                (req.did, req.identity_card, req.display_name, now, json.dumps(req.metadata)),
-            )
-            conn.commit()
-            conn.close()
+            self._log.info("Agent registered: DID=%s display_name='%s'", req.did, req.display_name)
 
             return {
                 "did": req.did,
@@ -495,68 +798,85 @@ class AuthServer:
             }
 
         @app.post("/agents/{did}/approve")
-        def approve_agent(did: str):
-            """Approve a pending agent. Can only approve agents with status='pending'."""
+        def approve_agent(did: str, x_admin_key: str = Header("")):
+            """Approve a pending agent. Requires admin key."""
+            require_admin(x_admin_key)
+
             conn = self._db_connect()
-            existing = conn.execute(
-                "SELECT status FROM agents WHERE did = ?", (did,)
-            ).fetchone()
-            if not existing:
-                conn.close()
-                raise HTTPException(404, "Agent not found")
+            try:
+                existing = conn.execute(
+                    "SELECT status FROM agents WHERE did = ?", (did,)
+                ).fetchone()
+                if not existing:
+                    raise HTTPException(404, "Agent not found")
 
-            if existing[0] != "pending":
-                conn.close()
-                raise HTTPException(
-                    409, f"Agent is already '{existing[0]}' (can only approve 'pending' agents)"
+                if existing[0] != "pending":
+                    raise HTTPException(
+                        409,
+                        f"Agent is already '{existing[0]}' (can only approve 'pending' agents)",
+                    )
+
+                now = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    "UPDATE agents SET status = 'approved', approved_at = ?, updated_at = ? WHERE did = ?",
+                    (now, now, did),
                 )
+                conn.commit()
+            finally:
+                conn.close()
 
-            now = datetime.now(timezone.utc).isoformat()
-            conn.execute(
-                "UPDATE agents SET status = 'approved', approved_at = ? WHERE did = ?",
-                (now, did),
-            )
-            conn.commit()
-            conn.close()
+            self._log.info("Agent approved: DID=%s", did)
 
-            return {"did": did, "status": "approved", "approved_at": now}
+            return {"did": did, "status": "approved"}
 
         @app.post("/agents/{did}/deny")
-        def deny_agent(did: str):
-            """Deny a pending agent."""
+        def deny_agent(did: str, x_admin_key: str = Header("")):
+            """Deny a pending agent. Requires admin key."""
+            require_admin(x_admin_key)
+
             conn = self._db_connect()
-            existing = conn.execute(
-                "SELECT status FROM agents WHERE did = ?", (did,)
-            ).fetchone()
-            if not existing:
-                conn.close()
-                raise HTTPException(404, "Agent not found")
+            try:
+                existing = conn.execute(
+                    "SELECT status FROM agents WHERE did = ?", (did,)
+                ).fetchone()
+                if not existing:
+                    raise HTTPException(404, "Agent not found")
 
-            if existing[0] != "pending":
-                conn.close()
-                raise HTTPException(
-                    409, f"Agent is already '{existing[0]}' (can only deny 'pending' agents)"
+                if existing[0] != "pending":
+                    raise HTTPException(
+                        409,
+                        f"Agent is already '{existing[0]}' (can only deny 'pending' agents)",
+                    )
+
+                now = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    "UPDATE agents SET status = 'denied', updated_at = ? WHERE did = ?",
+                    (now, did),
                 )
+                conn.commit()
+            finally:
+                conn.close()
 
-            now = datetime.now(timezone.utc).isoformat()
-            conn.execute(
-                "UPDATE agents SET status = 'denied' WHERE did = ?",
-                (did,),
-            )
-            conn.commit()
-            conn.close()
+            self._log.info("Agent denied: DID=%s", did)
 
             return {"did": did, "status": "denied"}
 
         @app.get("/agents/{did}/status")
-        def get_agent_status(did: str):
-            """Check an agent's registration and approval status."""
+        def get_agent_status(did: str, x_admin_key: str = Header("")):
+            """Check an agent's registration and approval status. Requires admin key."""
+            require_admin(x_admin_key)
+            return self._agent_status_internal(did)
+
+        def _agent_status_internal(did: str) -> dict:
+            """Internal helper for agent status lookup."""
             conn = self._db_connect()
-            row = conn.execute(
-                "SELECT did, status, display_name, registered_at, approved_at, metadata FROM agents WHERE did = ?",
-                (did,),
-            ).fetchone()
-            conn.close()
+            try:
+                row = conn.execute(
+                    "SELECT did, status, display_name, registered_at, updated_at, approved_at, metadata FROM agents WHERE did = ?",
+                    (did,),
+                ).fetchone()
+            finally:
+                conn.close()
 
             if not row:
                 raise HTTPException(404, "Agent not found")
@@ -566,30 +886,32 @@ class AuthServer:
                 "status": row[1],
                 "display_name": row[2],
                 "registered_at": row[3],
-                "approved_at": row[4],
-                "metadata": json.loads(row[5]) if row[5] else {},
+                "updated_at": row[4],
+                "approved_at": row[5],
+                "metadata": json.loads(row[6]) if row[6] else {},
             }
 
         @app.delete("/agents/{did}")
-        def delete_agent(did: str):
-            """Remove an agent from the registry."""
-            conn = self._db_connect()
-            existing = conn.execute(
-                "SELECT did FROM agents WHERE did = ?", (did,)
-            ).fetchone()
-            if not existing:
-                conn.close()
-                raise HTTPException(404, "Agent not found")
+        def delete_agent(did: str, x_admin_key: str = Header("")):
+            """Remove an agent from the registry. Requires admin key."""
+            require_admin(x_admin_key)
 
-            conn.execute("DELETE FROM agents WHERE did = ?", (did,))
-            conn.commit()
-            conn.close()
+            conn = self._db_connect()
+            try:
+                existing = conn.execute(
+                    "SELECT did FROM agents WHERE did = ?", (did,)
+                ).fetchone()
+                if not existing:
+                    raise HTTPException(404, "Agent not found")
+
+                conn.execute("DELETE FROM agents WHERE did = ?", (did,))
+                conn.commit()
+            finally:
+                conn.close()
+
+            self._log.info("Agent deleted: DID=%s", did)
 
             return {"did": did, "status": "deleted"}
-
-        @app.get("/health")
-        def health():
-            return {"status": "ok", "did": self._storage.get_identity_card().id}
 
     # ------------------------------------------------------------------
     # Run
@@ -603,21 +925,45 @@ class AuthServer:
     ) -> None:
         """Start the auth server (blocking)."""
         import uvicorn
-        print(f"🔐 hermes-id Auth Server starting on {host}:{port}")
-        print(f"   Server DID: {self._storage.get_identity_card().id}")
-        print(f"   Agent registry: {self._db_path}")
-        print(f"   Token TTL: {self._token_ttl}s")
-        uvicorn.run(self.app, host=host, port=port, log_level=log_level)
 
+        card = self._storage.get_identity_card()
+        print(f"🔐  hermes-id Auth Server v1.1.0")
+        print(f"    Server DID:    {card.id}")
+        print(f"    Listening:     http://{host}:{port}")
+        print(f"    API docs:      http://{host}:{port}/docs")
+        print(f"    Agent registry: {self._db_path}")
+        print(f"    Token TTL:     {self._token_ttl}s")
+        print(f"    Admin key:     {self._admin_key[:16]}... (set HERMES_ID_ADMIN_KEY to customize)")
+        print()
+
+        uvicorn.run(
+            self.app,
+            host=host,
+            port=port,
+            log_level=log_level,
+            access_log=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Convenience
+# ---------------------------------------------------------------------------
 
 def run_server(
     identity_dir: Optional[str] = None,
     db_path: Optional[str] = None,
     host: str = _DEFAULT_HOST,
     port: int = _DEFAULT_PORT,
+    admin_key: Optional[str] = None,
+    cors_origins: Optional[list[str]] = None,
 ) -> None:
     """Convenience function to start the auth server."""
-    server = AuthServer(identity_dir=identity_dir, db_path=db_path)
+    server = AuthServer(
+        identity_dir=identity_dir,
+        db_path=db_path,
+        admin_key=admin_key,
+        cors_origins=cors_origins,
+    )
     server.run(host=host, port=port)
 
 

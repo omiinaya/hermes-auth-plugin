@@ -113,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     server_p.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     server_p.add_argument("--db", help="Path to agent registry database (default: agent_registry.db)")
     server_p.add_argument("--token-ttl", type=int, default=86400, help="Token lifetime in seconds (default: 86400)")
+    server_p.add_argument("--admin-key", help="Admin API key for approving/denying agents (default: random)")
+    server_p.add_argument("--cors-origins", default="*", help="Comma-separated CORS allowed origins (default: *)")
 
     # mcp
     sub.add_parser(
@@ -453,6 +455,8 @@ def _cmd_server(args: argparse.Namespace) -> int:
         identity_dir=args.dir,
         db_path=args.db,
         token_ttl=args.token_ttl,
+        admin_key=args.admin_key,
+        cors_origins=args.cors_origins.split(",") if args.cors_origins else None,
     )
     server.run(host=args.host, port=args.port)
     return 0

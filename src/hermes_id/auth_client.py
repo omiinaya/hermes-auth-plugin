@@ -31,6 +31,10 @@ Usage::
     payload = client.verify_token(token)
     if payload:
         print(f"Authenticated as {payload['did']}")
+
+    # For admin operations:
+    client = AuthClient("http://auth-server:9488", admin_key="your-admin-key")
+    client.approve_agent(did)
 """
 
 from __future__ import annotations
@@ -39,7 +43,6 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urljoin
 
 import httpx
 
@@ -53,11 +56,14 @@ class AuthClient:
 
     Agents use this to authenticate, register, and get tokens.
     Services use this to verify tokens.
+    Admins use this with an ``admin_key`` to manage the agent registry.
 
     Args:
-        server_url: Base URL of the hermes-id Auth Server (e.g. ``http://localhost:9488``).
-        identity_dir: Path to the identity directory. If None, uses default.
+        server_url: Base URL of the hermes-id Auth Server.
+        identity_dir: Path to identity dir. If None, no local identity ops.
         timeout: HTTP request timeout in seconds.
+        admin_key: Admin API key for approved/deny/delete operations.
+            Can also be set via ``HERMES_ID_ADMIN_KEY`` env var.
     """
 
     def __init__(
@@ -65,11 +71,13 @@ class AuthClient:
         server_url: str,
         identity_dir: Optional[str] = None,
         timeout: float = 30.0,
+        admin_key: Optional[str] = None,
     ):
         self._server_url = server_url.rstrip("/")
         self._timeout = timeout
         self._storage = IdentityStorage(directory=identity_dir) if identity_dir else None
-        self._client = httpx.Client(timeout=timeout, verify=False)
+        self._admin_key = admin_key or os.environ.get("HERMES_ID_ADMIN_KEY", "")
+        self._client = httpx.Client(timeout=timeout)
 
     def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -80,10 +88,7 @@ class AuthClient:
     # ------------------------------------------------------------------
 
     def get_identity(self) -> dict[str, Any]:
-        """Get the auth server's identity card.
-
-        Returns the server's DID document as a dict.
-        """
+        """Get the auth server's identity card (DID document)."""
         resp = self._client.get(f"{self._server_url}/identity")
         resp.raise_for_status()
         return resp.json()
@@ -93,6 +98,13 @@ class AuthClient:
         resp = self._client.get(f"{self._server_url}/health")
         resp.raise_for_status()
         return resp.json()
+
+    # ------------------------------------------------------------------
+    # Admin headers
+    # ------------------------------------------------------------------
+
+    def _admin_headers(self) -> dict[str, str]:
+        return {"X-Admin-Key": self._admin_key} if self._admin_key else {}
 
     # ------------------------------------------------------------------
     # Authentication
@@ -115,16 +127,11 @@ class AuthClient:
     def sign_challenge(self, challenge_b64: str) -> str:
         """Sign a challenge with the local identity's private key.
 
-        Requires identity_dir to have been set on construction.
-
         Args:
             challenge_b64: The base64-encoded challenge from the server.
 
         Returns:
             Base64-encoded Ed25519 signature.
-
-        Raises:
-            RuntimeError: If no identity was loaded.
         """
         if not self._storage:
             raise RuntimeError("No identity configured. Pass identity_dir to AuthClient.")
@@ -164,7 +171,7 @@ class AuthClient:
 
         Returns::
 
-            {"token": "...", "expires_at": 1234567890.0, "did": "did:hermes:..."}
+            {"token": "...", "token_id": "...", "expires_at": 1234567890.0, "did": "..."}
         """
         if identity_card is None:
             identity_card = self.get_identity_card_json()
@@ -199,6 +206,32 @@ class AuthClient:
         if data.get("valid"):
             return data
         return None
+
+    def refresh_token(self, token: str) -> Optional[dict[str, Any]]:
+        """Refresh an expiring token.
+
+        Returns a new token with extended TTL.
+        """
+        resp = self._client.post(
+            f"{self._server_url}/token/refresh",
+            json={"token": token},
+        )
+        if resp.status_code == 401:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
+    def revoke_token(self, token: str) -> bool:
+        """Revoke a token before it expires.
+
+        Returns True on success.
+        """
+        resp = self._client.post(
+            f"{self._server_url}/token/revoke",
+            json={"token": token},
+        )
+        resp.raise_for_status()
+        return resp.json().get("status") == "revoked"
 
     # ------------------------------------------------------------------
     # Agent Registry
@@ -239,43 +272,71 @@ class AuthClient:
         return resp.json()
 
     def get_agent_status(self, did: str) -> dict[str, Any]:
-        """Check an agent's registration status."""
-        resp = self._client.get(f"{self._server_url}/agents/{did}/status")
+        """Check an agent's registration status. Requires admin key."""
+        resp = self._client.get(
+            f"{self._server_url}/agents/{did}/status",
+            headers=self._admin_headers(),
+        )
         resp.raise_for_status()
         return resp.json()
 
-    def list_agents(self, status: Optional[str] = None) -> list[dict[str, Any]]:
-        """List all agents in the registry.
+    def list_agents(
+        self,
+        status: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """List all agents in the registry. Requires admin key.
 
         Args:
             status: Optional filter ('pending', 'approved', 'denied').
+            page: Page number (1-indexed).
+            page_size: Items per page (max 200).
+            search: Search DIDs and display names.
 
-        Returns:
-            List of agent dicts.
+        Returns::
+
+            {"agents": [...], "total": N, "page": 1, "page_size": 50, "pages": N}
         """
-        url = f"{self._server_url}/agents"
+        params: dict[str, Any] = {"page": page, "page_size": page_size}
         if status:
-            url += f"?status={status}"
-        resp = self._client.get(url)
+            params["status"] = status
+        if search:
+            params["search"] = search
+
+        resp = self._client.get(
+            f"{self._server_url}/agents",
+            params=params,
+            headers=self._admin_headers(),
+        )
         resp.raise_for_status()
-        data = resp.json()
-        return data.get("agents", [])
+        return resp.json()
 
     def approve_agent(self, did: str) -> dict[str, Any]:
-        """Approve a pending agent (admin action)."""
-        resp = self._client.post(f"{self._server_url}/agents/{did}/approve")
+        """Approve a pending agent. Requires admin key."""
+        resp = self._client.post(
+            f"{self._server_url}/agents/{did}/approve",
+            headers=self._admin_headers(),
+        )
         resp.raise_for_status()
         return resp.json()
 
     def deny_agent(self, did: str) -> dict[str, Any]:
-        """Deny a pending agent (admin action)."""
-        resp = self._client.post(f"{self._server_url}/agents/{did}/deny")
+        """Deny a pending agent. Requires admin key."""
+        resp = self._client.post(
+            f"{self._server_url}/agents/{did}/deny",
+            headers=self._admin_headers(),
+        )
         resp.raise_for_status()
         return resp.json()
 
     def delete_agent(self, did: str) -> dict[str, Any]:
-        """Remove an agent from the registry."""
-        resp = self._client.delete(f"{self._server_url}/agents/{did}")
+        """Remove an agent from the registry. Requires admin key."""
+        resp = self._client.delete(
+            f"{self._server_url}/agents/{did}",
+            headers=self._admin_headers(),
+        )
         resp.raise_for_status()
         return resp.json()
 
@@ -289,22 +350,25 @@ class AuthFlow:
 
         flow = AuthFlow("http://auth-server:9488", identity_dir="~/.hermes/identity")
         token = flow.login()
-        # token is now a signed auth token you can present to any spacetime-x service
     """
 
     def __init__(self, server_url: str, identity_dir: Optional[str] = None):
         self._client = AuthClient(server_url, identity_dir=identity_dir)
         self._storage = IdentityStorage(directory=identity_dir) if identity_dir else None
 
-    def login(self) -> str:
-        """Full auth flow: challenge → sign → authenticate → return token."""
+    def login(self) -> tuple[str, dict[str, Any]]:
+        """Full auth flow: challenge → sign → authenticate → return token.
+
+        Returns:
+            Tuple of (token_string, full_response_dict).
+        """
         card = self._storage.get_identity_card()
         did = card.id
 
         challenge = self._client.challenge(did)
         sig = self._client.sign_challenge(challenge["challenge_b64"])
         result = self._client.authenticate(did, challenge["challenge_b64"], sig)
-        return result["token"]
+        return result["token"], result
 
     def close(self) -> None:
         self._client.close()

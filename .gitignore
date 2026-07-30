@@ -33,3 +33,6 @@ htmlcov/
 *.hermes-id
 *.identity.private.key
 *.identity.json
+*.db
+*.log
+__pycache__/
