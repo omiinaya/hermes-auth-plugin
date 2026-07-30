@@ -24,8 +24,6 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from hermes_id.crypto import (
     generate_keypair,
-    serialize_public_key,
-    deserialize_public_key,
     sign,
     verify,
     public_key_bytes,
