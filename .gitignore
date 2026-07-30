@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.whl
+
+# Environment
+.env
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Identity data (DO NOT COMMIT)
+*.hermes-id
+*.identity.private.key
+*.identity.json

@@ -1,0 +1,4 @@
+name: hermes-id
+version: 1.0.0
+description: "Self-Sovereign Identity — Ed25519 identity cards & mutual auth handshake for Hermes Agent. Every instance gets a unique DID, a signed credential, and a challenge-response protocol for secure peer-to-peer authentication."
+pip_dependencies: []
