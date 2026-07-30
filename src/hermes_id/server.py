@@ -215,6 +215,11 @@ class AuthServer:
         self._token_ttl = token_ttl
         self._challenge_ttl = challenge_ttl
 
+        # Cached keypair (loaded on first use, avoids decrypting on every request)
+        self._cached_private_key: Optional[ed25519.Ed25519PrivateKey] = None
+        self._cached_public_key: Optional[ed25519.Ed25519PublicKey] = None
+        self._cached_card: Optional[IdentityCard] = None
+
         # Admin key
         self._admin_key = admin_key or os.environ.get("HERMES_ID_ADMIN_KEY", "")
         if not self._admin_key:
@@ -243,10 +248,20 @@ class AuthServer:
             version="1.1.0",
             description=(
                 "Self-Sovereign Identity for agents — challenge-response auth, "
-                "token issuance, agent registry with approval workflow."
+                "token issuance, agent registry with approval workflow.\n\n"
+                "## Quick Start\n\n"
+                "1. An agent calls `POST /challenge` to get a random nonce\n"
+                "2. The agent signs the nonce with their Ed25519 key\n"
+                "3. The agent calls `POST /authenticate` to prove identity\n"
+                "4. The server issues a signed auth token\n"
+                "5. Services call `POST /verify` to check the token"
             ),
             docs_url="/docs",
             redoc_url="/redoc",
+            contact={
+                "name": "Hermes ID",
+                "url": "https://github.com/omiinaya/hermes-id",
+            },
         )
 
         # CORS
@@ -347,7 +362,10 @@ class AuthServer:
     # ------------------------------------------------------------------
 
     def _get_keypair(self) -> tuple[ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey, IdentityCard]:
-        """Load the server's identity keypair and card."""
+        """Load the server's identity keypair and card (cached after first load)."""
+        if self._cached_private_key is not None:
+            return self._cached_private_key, self._cached_public_key, self._cached_card
+
         if not self._storage.exists():
             raise RuntimeError(
                 "No identity configured. Run `hermes-id init` first."
@@ -360,6 +378,13 @@ class AuthServer:
         private_key = self._storage.unlock(password)
         public_key = private_key.public_key()
         card = self._storage.get_identity_card()
+
+        # Cache
+        self._cached_private_key = private_key
+        self._cached_public_key = public_key
+        self._cached_card = card
+
+        self._log.info("Keypair loaded and cached (DID=%s)", card.id)
         return private_key, public_key, card
 
     def _sign_token(self, payload: dict[str, Any]) -> str:
