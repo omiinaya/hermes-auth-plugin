@@ -44,6 +44,13 @@ all = [
     "httpx>=0.27.0",
     "mcp>=1.0.0",
 ]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-timeout>=2.2.0",
+    "ruff>=0.6.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
+]
 
 [project.scripts]
 hermes-id = "hermes_id.cli:main"
