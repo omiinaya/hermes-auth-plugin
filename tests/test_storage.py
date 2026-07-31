@@ -143,3 +143,78 @@ class TestStorageErrors:
         priv_path.write_bytes(b"garbage" * 10)
         with pytest.raises(Exception):
             storage.unlock("test-passphrase-1234-strong!")
+
+
+class TestStorageRotation:
+    """Key rotation: new DID, transition proof, backup safety."""
+
+    def test_rotate_new_did_and_transition_proof(self, created_identity):
+        storage, password, old_card = created_identity
+        new_card = storage.rotate(password)
+        assert new_card.id != old_card.id
+        assert new_card.id.startswith("did:hermes:")
+        # Transition proof present and verifiable
+        from hermes_id.identity import verify_key_rotation
+        rot = verify_key_rotation(new_card)
+        assert rot is not None
+        assert rot["previous_did"] == old_card.id
+
+    def test_rotate_self_signature_valid(self, created_identity):
+        storage, password, _ = created_identity
+        from hermes_id.identity import verify_identity_card
+        new_card = storage.rotate(password)
+        assert verify_identity_card(new_card)
+
+    def test_rotate_backup_dir_created(self, created_identity):
+        storage, password, old_card = created_identity
+        storage.rotate(password)
+        backup_root = Path(storage._dir) / "rotated"
+        assert backup_root.exists()
+        subs = list(backup_root.iterdir())
+        assert len(subs) == 1
+        assert (subs[0] / "identity.json").exists()
+        assert (subs[0] / "private.enc").exists()
+        # Backup preserves the OLD DID
+        import json as _json
+        backup_card = _json.loads((subs[0] / "identity.json").read_text())
+        assert backup_card["id"] == old_card.id
+
+    def test_rotate_no_backup_flag(self, created_identity):
+        storage, password, _ = created_identity
+        storage.rotate(password, keep_backup=False)
+        backup_root = Path(storage._dir) / "rotated"
+        assert not backup_root.exists()
+
+    def test_rotate_after_rotate(self, created_identity):
+        storage, password, _ = created_identity
+        card2 = storage.rotate(password)
+        card3 = storage.rotate(password)
+        assert card3.id != card2.id
+        from hermes_id.identity import verify_key_rotation
+        rot = verify_key_rotation(card3)
+        assert rot is not None
+        assert rot["previous_did"] == card2.id
+        assert card3.metadata.get("rotations") == 2
+
+    def test_rotate_preserves_metadata_and_merges(self, created_identity):
+        storage, password, old_card = created_identity
+        new_card = storage.rotate(password, metadata={"note": "compromise-response"})
+        assert new_card.metadata.get("profile") == "test"  # preserved from old
+        assert new_card.metadata.get("note") == "compromise-response"  # merged
+        assert new_card.metadata.get("rotations") == 1
+
+    def test_rotate_keeps_same_password_unlockable(self, created_identity):
+        storage, password, _ = created_identity
+        storage.rotate(password)
+        key = storage.unlock(password)
+        assert key is not None
+
+    def test_rotate_without_identity_raises(self, tmp_identity_dir):
+        storage = IdentityStorage(directory=tmp_identity_dir)
+        with pytest.raises(FileNotFoundError):
+            storage.rotate("whatever")
+
+    def test_rotate_wrong_password_raises(self, created_identity):
+        storage, _, _ = created_identity
+        with pytest.raises(Exception):
+            storage.rotate("wrong-password")

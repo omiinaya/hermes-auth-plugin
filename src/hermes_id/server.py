@@ -947,15 +947,27 @@ class AuthServer:
         host: str = _DEFAULT_HOST,
         port: int = _DEFAULT_PORT,
         log_level: str = "info",
+        ssl_certfile: Optional[str] = None,
+        ssl_keyfile: Optional[str] = None,
     ) -> None:
-        """Start the auth server (blocking)."""
+        """Start the auth server (blocking).
+
+        Args:
+            host: Bind address.
+            port: TCP port.
+            log_level: Uvicorn log level.
+            ssl_certfile: Path to TLS certificate (PEM) to serve HTTPS.
+            ssl_keyfile: Path to TLS private key (PEM) for the certificate.
+        """
         import uvicorn
 
         card = self._storage.get_identity_card()
-        print(f"🔐  hermes-id Auth Server v1.1.0")
+        scheme = "https" if ssl_certfile else "http"
+        print(f"🔐  hermes-id Auth Server v1.2.0")
         print(f"    Server DID:    {card.id}")
-        print(f"    Listening:     http://{host}:{port}")
-        print(f"    API docs:      http://{host}:{port}/docs")
+        print(f"    Listening:     {scheme}://{host}:{port}")
+        print(f"    API docs:      {scheme}://{host}:{port}/docs")
+        print(f"    TLS:           {'✅ enabled' if ssl_certfile else '❌ disabled (use --tls-cert/--tls-key for HTTPS)'}")
         print(f"    Agent registry: {self._db_path}")
         print(f"    Token TTL:     {self._token_ttl}s")
         print(f"    Admin key:     {self._admin_key[:16]}... (set HERMES_ID_ADMIN_KEY to customize)")
@@ -967,6 +979,8 @@ class AuthServer:
             port=port,
             log_level=log_level,
             access_log=True,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
         )
 
 
@@ -981,6 +995,8 @@ def run_server(
     port: int = _DEFAULT_PORT,
     admin_key: Optional[str] = None,
     cors_origins: Optional[list[str]] = None,
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
 ) -> None:
     """Convenience function to start the auth server."""
     server = AuthServer(
@@ -989,7 +1005,7 @@ def run_server(
         admin_key=admin_key,
         cors_origins=cors_origins,
     )
-    server.run(host=host, port=port)
+    server.run(host=host, port=port, ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
 
 
 def verify_auth_token(token: str, identity_card_path: Optional[str] = None) -> Optional[dict[str, Any]]:

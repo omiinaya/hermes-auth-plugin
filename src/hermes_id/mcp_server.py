@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from hermes_id.crypto import _b64, _unb64, sign, verify
-from hermes_id.identity import IdentityCard, verify_identity_card
+from hermes_id.identity import IdentityCard, verify_identity_card, verify_key_rotation
 from hermes_id.server import verify_auth_token
 from hermes_id.storage import IdentityStorage
 
@@ -131,6 +131,20 @@ class HermesIDMCPServer:
                     },
                 ),
                 Tool(
+                    name="hermes_id_verify_rotation",
+                    description="Verify the key-rotation transition proof on an identity card (was the rotation authorized by the previous key?)",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "identity_card_json": {
+                                "type": "string",
+                                "description": "JSON-encoded identity card with rotation metadata",
+                            },
+                        },
+                        "required": ["identity_card_json"],
+                    },
+                ),
+                Tool(
                     name="hermes_id_auth_client",
                     description="Full auth client against a hermes-id Auth Server: challenge → sign → authenticate",
                     inputSchema={
@@ -172,6 +186,8 @@ class HermesIDMCPServer:
                     return [TextContent(type="text", text=self._handle_sign(arguments))]
                 elif name == "hermes_id_verify_signature":
                     return [TextContent(type="text", text=self._handle_verify_signature(arguments))]
+                elif name == "hermes_id_verify_rotation":
+                    return [TextContent(type="text", text=self._handle_verify_rotation(arguments))]
                 elif name == "hermes_id_auth_client":
                     return [TextContent(type="text", text=self._handle_auth_client(arguments))]
                 else:
@@ -276,6 +292,29 @@ class HermesIDMCPServer:
             "valid": valid,
             "did": card.id,
             "signed_by": card.did_short,
+        })
+
+    def _handle_verify_rotation(self, args: dict) -> str:
+        identity_card_json = args.get("identity_card_json", "")
+        try:
+            card_data = json.loads(identity_card_json)
+            card = IdentityCard(**card_data)
+        except (json.JSONDecodeError, TypeError) as e:
+            return json.dumps({"valid": False, "error": f"Invalid card JSON: {e}"})
+
+        rotation = verify_key_rotation(card)
+        if rotation is None:
+            # Distinguish "no rotation metadata" from "failed proof"
+            if (card.metadata or {}).get("rotation"):
+                return json.dumps({"valid": False, "did": card.id,
+                                   "error": "Rotation transition proof invalid"})
+            return json.dumps({"valid": False, "did": card.id,
+                               "error": "Card has no rotation metadata"})
+        return json.dumps({
+            "valid": True,
+            "did": card.id,
+            "previous_did": rotation.get("previous_did"),
+            "rotated_at": rotation.get("rotated_at"),
         })
 
     def _handle_auth_client(self, args: dict) -> str:

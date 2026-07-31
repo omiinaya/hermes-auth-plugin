@@ -34,6 +34,7 @@ from hermes_id.identity import (
     IdentityCard,
     create_identity,
     verify_identity_card,
+    verify_key_rotation,
     format_identity_card,
 )
 from hermes_id.storage import IdentityStorage
@@ -64,6 +65,16 @@ def main(argv: list[str] | None = None) -> int:
     init_p.add_argument("--password", help="Encryption passphrase (prompts if omitted)")
     init_p.add_argument("--profile", help="Profile name (stored in metadata)")
     init_p.add_argument("--force", action="store_true", help="Overwrite existing identity")
+
+    # rotate
+    rotate_p = sub.add_parser(
+        "rotate", parents=[parent],
+        help="Rotate the identity keypair (new key + transition proof signed by old key)",
+    )
+    rotate_p.add_argument("--password", help="Passphrase for the current private key (prompts if omitted)")
+    rotate_p.add_argument("--note", help="Optional note stored in new identity metadata")
+    rotate_p.add_argument("--no-backup", action="store_true", help="Skip backing up the previous key")
+    rotate_p.add_argument("--force", action="store_true", help="Skip the confirmation prompt")
 
     # show
     sub.add_parser("show", parents=[parent], help="Display your identity card")
@@ -115,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
     server_p.add_argument("--token-ttl", type=int, default=86400, help="Token lifetime in seconds (default: 86400)")
     server_p.add_argument("--admin-key", help="Admin API key for approving/denying agents (default: random)")
     server_p.add_argument("--cors-origins", default="*", help="Comma-separated CORS allowed origins (default: *)")
+    server_p.add_argument("--tls-cert", help="Path to TLS certificate (PEM) — enables HTTPS")
+    server_p.add_argument("--tls-key", help="Path to TLS private key (PEM) for the certificate")
 
     # mcp
     sub.add_parser(
@@ -141,6 +154,8 @@ def _dispatch(args: argparse.Namespace) -> int:
 
         if command == "init":
             return _cmd_init(args)
+        elif command == "rotate":
+            return _cmd_rotate(args)
         elif args.command == "show":
             return _cmd_show(args)
         elif args.command == "export":
@@ -223,6 +238,60 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print()
     print("⚠️  KEEP YOUR PASSPHRASE SAFE. It cannot be recovered.")
     print("   Your identity card (public) can be shared freely.")
+    return 0
+
+
+def _cmd_rotate(args: argparse.Namespace) -> int:
+    """Rotate the identity keypair."""
+    storage = _get_storage(args)
+
+    if not storage.exists():
+        print(
+            "❌ No identity configured. Run `hermes-id init` first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    password = args.password
+    if not password:
+        password = os.environ.get("HERMES_ID_PASSPHRASE") or ""
+    if not password:
+        password = _prompt_password("Current passphrase: ")
+
+    old_card = storage.get_identity_card()
+
+    if not args.force:
+        print(f"⚠️  This will replace your current identity:")
+        print(f"      Old DID: {old_card.did_short}")
+        print(f"      New DID: (generated)")
+        try:
+            answer = input("   Continue? [y/N] ").strip().lower()
+        except EOFError:
+            answer = "n"
+        if answer not in ("y", "yes"):
+            print("❌ Rotation cancelled.")
+            return 1
+
+    metadata = {}
+    if getattr(args, "note", None):
+        metadata["note"] = args.note
+
+    card = storage.rotate(
+        password=password,
+        metadata=metadata,
+        keep_backup=not args.no_backup,
+    )
+
+    print()
+    print(format_identity_card(card))
+    print()
+    print(f"✅ Key rotated. New DID: {card.id}")
+    print(f"   Previous: {old_card.id}")
+    print(f"   Transition proof: {'✅ valid' if verify_key_rotation(card) else '❌ missing'}")
+    if not args.no_backup:
+        print(f"   Backup of old key: {storage._dir / 'rotated'}")
+    print()
+    print("⚠️  Update every service that pins your DID to the new one.")
     return 0
 
 
@@ -458,7 +527,12 @@ def _cmd_server(args: argparse.Namespace) -> int:
         admin_key=args.admin_key,
         cors_origins=args.cors_origins.split(",") if args.cors_origins else None,
     )
-    server.run(host=args.host, port=args.port)
+    server.run(
+        host=args.host,
+        port=args.port,
+        ssl_certfile=args.tls_cert,
+        ssl_keyfile=args.tls_key,
+    )
     return 0
 
 

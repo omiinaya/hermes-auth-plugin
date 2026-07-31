@@ -219,6 +219,100 @@ class IdentityStorage:
                 secure_zero(bytearray(decrypted_der))
         return private_key
 
+    def rotate(
+        self,
+        password: str,
+        metadata: Optional[dict[str, Any]] = None,
+        keep_backup: bool = True,
+    ) -> IdentityCard:
+        """Rotate the identity keypair.
+
+        Generates a fresh Ed25519 keypair, creates a new identity card
+        carrying a **transition proof** signed by the previous key (see
+        :func:`hermes_id.identity.create_identity`), and persists the new
+        key.  The previous key is preserved in a ``rotated/`` backup
+        directory so a compromised rotation can be rolled back.
+
+        Args:
+            password: Passphrase for the *current* private key.
+            metadata: Optional claims for the new identity card.  If the
+                previous card had metadata, it is merged underneath (new
+                keys win).
+            keep_backup: If True, copy the previous identity files into
+                ``<dir>/rotated/<old-did>/`` for rollback.
+
+        Returns:
+            The new ``IdentityCard``.
+
+        Raises:
+            FileNotFoundError: If no identity exists yet.
+            cryptography.exceptions.InvalidTag: If the password is wrong.
+        """
+        if not self.exists():
+            raise FileNotFoundError(
+                f"No identity found at {self._dir}. "
+                "Run `hermes-id init` first."
+            )
+
+        import time
+        now = datetime_now_iso()
+
+        # Load current identity
+        old_card = self.get_identity_card()
+        old_config = self.get_config()
+        old_private = self.unlock(password)
+
+        # Backup current state before overwriting
+        if keep_backup:
+            old_suffix = old_card.id.split(":")[-1][:16]
+            backup_dir = self._dir / "rotated" / f"{old_suffix}"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_dir.chmod(0o700)
+            for fname in (_PRIVATE_KEY_FILE, _IDENTITY_FILE, _CONFIG_FILE):
+                src = self._dir / fname
+                if src.exists():
+                    dst = backup_dir / fname
+                    dst.write_bytes(src.read_bytes())
+                    dst.chmod(_FILE_PERMS)
+
+        # Merge metadata: previous card metadata + rotation info + caller claims
+        new_metadata = dict(old_card.metadata or {})
+        new_metadata.pop("rotation", None)  # fresh rotation entry below
+        if metadata:
+            new_metadata.update(metadata)
+        new_metadata["rotations"] = int(new_metadata.get("rotations", 0)) + 1
+
+        # Generate fresh keypair + card with transition proof
+        new_private, new_public = generate_keypair()
+        card = create_identity(
+            new_private,
+            new_public,
+            metadata=new_metadata,
+            previous_card=old_card,
+            previous_private_key=old_private,
+        )
+
+        # Encrypt new private key
+        priv_der = serialize_private_key(new_private)
+        encrypted = encrypt_key(priv_der, password)
+        secure_zero(bytearray(priv_der))
+
+        kdf = self._detect_kdf()
+
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._dir.chmod(0o700)
+        self._write_private(encrypted)
+        self._write_identity(card)
+        self._write_config(StorageConfig(
+            version=_STORAGE_VERSION,
+            created_at=old_config.created_at or now,
+            updated_at=now,
+            kdf=kdf,
+            metadata=new_metadata,
+        ))
+
+        return card
+
     # ------------------------------------------------------------------
     # Secure context manager for temporary key use
     # ------------------------------------------------------------------
@@ -278,6 +372,8 @@ class IdentityStorage:
         ]
         if card.metadata:
             lines.append(f"   Metadata:   {json.dumps(card.metadata)}")
+        if (card.metadata or {}).get("rotation"):
+            lines.append(f"   Rotated:    ✅ transition proof present")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------

@@ -82,6 +82,7 @@ in an access control system.
 | Command | Description |
 |---------|-------------|
 | `hermes-id init` | Create a new identity (generates keypair, saves encrypted) |
+| `hermes-id rotate [--note N] [--no-backup] [--force]` | Rotate the keypair (new DID + transition proof signed by old key) |
 | `hermes-id status` | Show identity status |
 | `hermes-id show` | Display formatted identity card |
 | `hermes-id export [file]` | Export identity card as JSON (stdout or file) |
@@ -153,6 +154,10 @@ Designed with **"as secure as possible"** as the primary constraint:
 - **Argon2id** (preferred) / **scrypt** / **PBKDF2** for key derivation
 - All randomness from **kernel CSPRNG** (`os.urandom()`)
 - File permissions locked to **0600/0700**
+- **Key rotation** with transition proofs — new cards are signed by both the
+  new key (self-proof) and the previous key (transition proof), so verifiers
+  can confirm rotations were authorized by the previous controller
+- **Optional TLS** — serve the auth server over HTTPS with `--tls-cert` / `--tls-key`
 
 See [THREAT_MODEL.md](./docs/THREAT_MODEL.md) for the complete security analysis.
 
@@ -201,7 +206,30 @@ export HERMES_ID_PASSPHRASE="your-passphrase"
 
 # Start the auth server
 hermes-id server --port 9488
+
+# Serve over HTTPS (recommended for anything beyond localhost)
+hermes-id server --port 9488 --tls-cert /etc/ssl/hermes-id.crt --tls-key /etc/ssl/hermes-id.key
 ```
+
+### Key Rotation
+
+```bash
+# Rotate your identity keypair (new DID, transition-proofed)
+hermes-id rotate --note "annual-rotation"
+
+# Rotate non-interactively (from scripts)
+hermes-id rotate --force --note "compromise-response"
+
+# The old key is backed up to ~/.hermes/identity/rotated/<old-did>/
+# unless you pass --no-backup
+```
+
+Rotation produces a new DID and a new self-signed card that also carries a
+**transition proof** signed by the previous key. Verifiers can call
+`verify_key_rotation(card)` to confirm the rotation was authorized by the
+previous controller — this is what makes rotation safe against key theft:
+an attacker who steals only the *new* key cannot forge a valid transition
+from the *old* identity.
 
 ### Auth Flow — Agent Perspective
 
@@ -294,7 +322,8 @@ For other Hermes agents, an MCP server is available:
 ```
 
 Exposed MCP tools: `hermes_id_status`, `hermes_id_export`, `hermes_id_verify_card`,
-`hermes_id_sign`, `hermes_id_verify_signature`, `hermes_id_auth_client`.
+`hermes_id_sign`, `hermes_id_verify_signature`, `hermes_id_verify_rotation`,
+`hermes_id_auth_client`.
 
 ### Python AuthClient
 

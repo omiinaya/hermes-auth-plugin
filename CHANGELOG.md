@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.0 — 2026-07-31
+
+### Added
+- **Key rotation** (`hermes-id rotate`) — generates a new Ed25519 keypair and
+  identity card carrying a **transition proof** signed by the previous key:
+  - `verify_key_rotation(card)` confirms rotations were authorized by the previous controller
+  - Previous key auto-backed up to `~/.hermes/identity/rotated/<old-did>/` (skip with `--no-backup`)
+  - Rotation metadata merged into the new card (`rotations` counter, `note`, prior card metadata)
+  - Confirmation prompt (skip with `--force`), passphrase via env var or prompt
+- **TLS support for the Auth Server** — `--tls-cert` / `--tls-key` serve HTTPS
+  (verified: HTTPS works, plain HTTP on the TLS port is rejected)
+- Malformed base64 in rotation proofs now returns `None` (treated as invalid)
+  instead of raising — hardened against malicious cards
+
+### Changed
+- Version bumped to 1.2.0
+- `status` shows a "Rotated: ✅" line when the card carries a transition proof
+
 ## 1.1.0 — 2026-07-30
 
 ### Added

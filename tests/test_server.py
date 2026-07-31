@@ -345,3 +345,106 @@ class TestAuthFlow:
         assert v is not None
         assert v["valid"] is True
         client.close()
+
+
+class TestTLSSupport:
+    """Auth server can serve HTTPS with a PEM cert/key pair."""
+
+    def _gen_cert(self, tmp_path):
+        """Generate a self-signed cert for localhost."""
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        import datetime
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.utcnow() - datetime.timedelta(days=1))
+            .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=30))
+            .add_extension(
+                x509.SubjectAlternativeName([x509.DNSName("localhost")]),
+                critical=False,
+            )
+            .sign(key, hashes.SHA256())
+        )
+        cert_path = tmp_path / "cert.pem"
+        key_path = tmp_path / "key.pem"
+        cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        key_path.write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+        )
+        return str(cert_path), str(key_path)
+
+    def test_https_serves_identity(self, server_identity, tmp_path):
+        cert, key = self._gen_cert(tmp_path)
+        from hermes_id.server import AuthServer
+
+        db_path = tmp_path / "tls_registry.db"
+        server = AuthServer(identity_dir=server_identity, db_path=str(db_path), admin_key="k")
+        port = 9496
+
+        import uvicorn
+        t = threading.Thread(
+            target=lambda: uvicorn.run(
+                server.app,
+                host="127.0.0.1",
+                port=port,
+                log_level="error",
+                ssl_certfile=cert,
+                ssl_keyfile=key,
+            ),
+            daemon=True,
+        )
+        t.start()
+        time.sleep(2.5)
+        try:
+            import urllib.request, ssl as ssl_mod
+            ctx = ssl_mod.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl_mod.CERT_NONE
+            with urllib.request.urlopen(f"https://127.0.0.1:{port}/identity", context=ctx, timeout=5) as r:
+                body = r.read().decode()
+                assert r.status == 200
+                assert "did:hermes:" in body
+        finally:
+            t.join(timeout=2)
+
+    def test_plain_http_fails_on_tls_port(self, server_identity, tmp_path):
+        cert, key = self._gen_cert(tmp_path)
+        from hermes_id.server import AuthServer
+
+        db_path = tmp_path / "tls_registry2.db"
+        server = AuthServer(identity_dir=server_identity, db_path=str(db_path), admin_key="k")
+        port = 9497
+
+        import uvicorn
+        t = threading.Thread(
+            target=lambda: uvicorn.run(
+                server.app,
+                host="127.0.0.1",
+                port=port,
+                log_level="error",
+                ssl_certfile=cert,
+                ssl_keyfile=key,
+            ),
+            daemon=True,
+        )
+        t.start()
+        time.sleep(2.5)
+        try:
+            import httpx
+            with pytest.raises(Exception):
+                httpx.get(f"http://127.0.0.1:{port}/identity", timeout=3)
+        finally:
+            t.join(timeout=2)

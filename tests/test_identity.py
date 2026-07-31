@@ -160,3 +160,85 @@ class TestDisplay:
 
     def test_public_key_multibase(self, identity_card):
         assert identity_card.public_key_multibase.startswith("u")
+
+
+class TestKeyRotation:
+    """Transition-proof signing and verification."""
+
+    def test_rotation_proof_verifies(self, keypair):
+        from hermes_id.identity import create_identity, verify_key_rotation
+        from hermes_id.crypto import generate_keypair
+        old_priv, old_pub = keypair
+        old_card = create_identity(old_priv, old_pub, metadata={"gen": 1})
+        new_priv, new_pub = generate_keypair()
+        new_card = create_identity(
+            new_priv, new_pub,
+            metadata={"gen": 2},
+            previous_card=old_card,
+            previous_private_key=old_priv,
+        )
+        rot = verify_key_rotation(new_card)
+        assert rot is not None
+        assert rot["previous_did"] == old_card.id
+        assert rot["previous_key_fingerprint"] == old_card.public_key_multibase
+
+    def test_no_rotation_metadata_returns_none(self, identity_card):
+        from hermes_id.identity import verify_key_rotation
+        assert verify_key_rotation(identity_card) is None
+
+    def test_rotation_with_wrong_previous_key_fails(self, keypair):
+        from hermes_id.identity import create_identity, verify_key_rotation
+        from hermes_id.crypto import generate_keypair
+        old_priv, old_pub = keypair
+        old_card = create_identity(old_priv, old_pub)
+        new_priv, new_pub = generate_keypair()
+        # Sign with a DIFFERENT key than the one recorded as previous
+        rogue_priv, rogue_pub = generate_keypair()
+        rogue_card = create_identity(
+            new_priv, new_pub,
+            metadata={"gen": 2},
+            previous_card=old_card,
+            previous_private_key=rogue_priv,
+        )
+        # Verification must fail because transition sig doesn't match
+        # the recorded previous fingerprint
+        assert verify_key_rotation(rogue_card) is None
+
+    def test_rotation_tampered_transition_signature_fails(self, keypair):
+        from hermes_id.identity import create_identity, verify_key_rotation
+        from hermes_id.crypto import generate_keypair
+        old_priv, old_pub = keypair
+        old_card = create_identity(old_priv, old_pub)
+        new_priv, new_pub = generate_keypair()
+        new_card = create_identity(
+            new_priv, new_pub,
+            previous_card=old_card,
+            previous_private_key=old_priv,
+        )
+        # Tamper with the signature
+        new_card.metadata["rotation"]["transition_signature"] = "AAABBBCCC"
+        assert verify_key_rotation(new_card) is None
+
+    def test_previous_private_key_required(self, keypair):
+        from hermes_id.identity import create_identity
+        from hermes_id.crypto import generate_keypair
+        import pytest as _pytest
+        old_priv, old_pub = keypair
+        old_card = create_identity(old_priv, old_pub)
+        new_priv, new_pub = generate_keypair()
+        with _pytest.raises(ValueError):
+            create_identity(new_priv, new_pub, previous_card=old_card)
+
+    def test_rotated_card_still_self_verifies(self, keypair):
+        from hermes_id.identity import create_identity, verify_identity_card, verify_key_rotation
+        from hermes_id.crypto import generate_keypair
+        old_priv, old_pub = keypair
+        old_card = create_identity(old_priv, old_pub)
+        new_priv, new_pub = generate_keypair()
+        new_card = create_identity(
+            new_priv, new_pub,
+            previous_card=old_card,
+            previous_private_key=old_priv,
+        )
+        assert verify_identity_card(new_card)
+        assert verify_key_rotation(new_card) is not None
