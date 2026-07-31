@@ -23,8 +23,11 @@ jobs:
         run: |
           PY=$(command -v python3.11 || command -v python3)
           echo "Using system Python: $PY ($($PY --version 2>&1))"
-          echo "$(dirname "$PY")" >> "$GITHUB_PATH"
-          python3 --version
+          # System python3.11 is the root-owned hermes-agent venv — create a
+          # fresh job-local venv so pip can install without permission issues.
+          $PY -m venv "$RUNNER_TEMP/ci-venv"
+          echo "$RUNNER_TEMP/ci-venv/bin" >> "$GITHUB_PATH"
+          python --version
 
       - name: Install dependencies
         run: |
