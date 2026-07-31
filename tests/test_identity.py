@@ -9,8 +9,8 @@ import pytest
 from hermes_id.identity import (
     IdentityCard,
     create_identity,
-    verify_identity_card,
     format_identity_card,
+    verify_identity_card,
 )
 
 
@@ -166,8 +166,8 @@ class TestKeyRotation:
     """Transition-proof signing and verification."""
 
     def test_rotation_proof_verifies(self, keypair):
-        from hermes_id.identity import create_identity, verify_key_rotation
         from hermes_id.crypto import generate_keypair
+        from hermes_id.identity import create_identity, verify_key_rotation
         old_priv, old_pub = keypair
         old_card = create_identity(old_priv, old_pub, metadata={"gen": 1})
         new_priv, new_pub = generate_keypair()
@@ -187,8 +187,8 @@ class TestKeyRotation:
         assert verify_key_rotation(identity_card) is None
 
     def test_rotation_with_wrong_previous_key_fails(self, keypair):
-        from hermes_id.identity import create_identity, verify_key_rotation
         from hermes_id.crypto import generate_keypair
+        from hermes_id.identity import create_identity, verify_key_rotation
         old_priv, old_pub = keypair
         old_card = create_identity(old_priv, old_pub)
         new_priv, new_pub = generate_keypair()
@@ -205,8 +205,8 @@ class TestKeyRotation:
         assert verify_key_rotation(rogue_card) is None
 
     def test_rotation_tampered_transition_signature_fails(self, keypair):
-        from hermes_id.identity import create_identity, verify_key_rotation
         from hermes_id.crypto import generate_keypair
+        from hermes_id.identity import create_identity, verify_key_rotation
         old_priv, old_pub = keypair
         old_card = create_identity(old_priv, old_pub)
         new_priv, new_pub = generate_keypair()
@@ -220,9 +220,10 @@ class TestKeyRotation:
         assert verify_key_rotation(new_card) is None
 
     def test_previous_private_key_required(self, keypair):
-        from hermes_id.identity import create_identity
-        from hermes_id.crypto import generate_keypair
         import pytest as _pytest
+
+        from hermes_id.crypto import generate_keypair
+        from hermes_id.identity import create_identity
         old_priv, old_pub = keypair
         old_card = create_identity(old_priv, old_pub)
         new_priv, new_pub = generate_keypair()
@@ -230,8 +231,12 @@ class TestKeyRotation:
             create_identity(new_priv, new_pub, previous_card=old_card)
 
     def test_rotated_card_still_self_verifies(self, keypair):
-        from hermes_id.identity import create_identity, verify_identity_card, verify_key_rotation
         from hermes_id.crypto import generate_keypair
+        from hermes_id.identity import (
+            create_identity,
+            verify_identity_card,
+            verify_key_rotation,
+        )
         old_priv, old_pub = keypair
         old_card = create_identity(old_priv, old_pub)
         new_priv, new_pub = generate_keypair()

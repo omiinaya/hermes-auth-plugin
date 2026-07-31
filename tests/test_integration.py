@@ -18,8 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_id.crypto import _b64, _unb64
-from hermes_id.identity import IdentityCard, verify_identity_card
+from hermes_id.identity import IdentityCard
 
 
 # Find the CLI binary
@@ -225,7 +224,6 @@ class TestCLIIntegration:
 
         # Start Bob as server
         port = 29487  # non-standard port
-        stop_file = os.path.join(identity_dir, "stop")
         server_errors = []
 
         def bob_server():

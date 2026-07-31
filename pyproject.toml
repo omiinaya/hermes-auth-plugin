@@ -51,3 +51,15 @@ hermes-id-admin = "hermes_id.admin_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Negative tests intentionally assert that *some* exception is raised
+"tests/*" = ["B017", "BLE001"]

@@ -18,17 +18,15 @@ All randomness comes from `os.urandom()` (kernel CSPRNG).
 import base64
 import hashlib
 import os
-import struct
-from typing import Optional, Tuple
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
+    NoEncryption,
     PrivateFormat,
     PublicFormat,
-    NoEncryption,
 )
 
 # ---------------------------------------------------------------------------
@@ -112,7 +110,7 @@ def _multibase_encode(data: bytes) -> str:
 # Ed25519 — Signing
 # ---------------------------------------------------------------------------
 
-def generate_keypair() -> Tuple[ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey]:
+def generate_keypair() -> tuple[ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey]:
     """Generate a fresh Ed25519 keypair from kernel entropy."""
     private = ed25519.Ed25519PrivateKey.generate()
     public = private.public_key()
@@ -184,7 +182,7 @@ def public_key_bytes(public_key: ed25519.Ed25519PublicKey) -> bytes:
 # X25519 — Key agreement
 # ---------------------------------------------------------------------------
 
-def generate_x25519_keypair() -> Tuple[x25519.X25519PrivateKey, x25519.X25519PublicKey]:
+def generate_x25519_keypair() -> tuple[x25519.X25519PrivateKey, x25519.X25519PublicKey]:
     """Generate an ephemeral X25519 keypair for session key agreement."""
     private = x25519.X25519PrivateKey.generate()
     public = private.public_key()
@@ -205,8 +203,8 @@ def derive_session_key(shared_secret: bytes, context: bytes = b"hermes-id/v1") -
     Uses HKDF-SHA256 to stretch the 32-byte DH output into a 32-byte
     symmetric key bound to the protocol context.
     """
-    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
     from cryptography.hazmat.primitives.hashes import SHA256
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
     hkdf = HKDF(
         algorithm=SHA256(),
@@ -232,7 +230,7 @@ def _derive_storage_key(password: str, salt: bytes) -> bytes:
     """
     # Try Argon2id first
     try:
-        from argon2.low_level import hash_secret_raw, Type
+        from argon2.low_level import Type, hash_secret_raw
         return hash_secret_raw(
             secret=password.encode("utf-8"),
             salt=salt,

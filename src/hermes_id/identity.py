@@ -15,24 +15,21 @@ itself.  The holder proves ownership by signing a challenge (see
 """
 
 import json
-import time
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from typing import Any, Optional
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from hermes_id.crypto import (
+    _b64,
+    _multibase_encode,
+    _unb64,
     derive_did,
     public_key_bytes,
-    serialize_public_key,
     sign,
     verify,
-    _b64,
-    _unb64,
-    _multibase_encode,
 )
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -71,7 +68,7 @@ class IdentityCard:
     assertion_method: list[str]
     created: str
     metadata: dict[str, Any] = field(default_factory=dict)
-    proof: Optional[dict[str, str]] = None
+    proof: dict[str, str] | None = None
 
     def to_json(self, indent: int = 2) -> str:
         """Serialize the identity card to pretty-printed JSON."""
@@ -102,9 +99,9 @@ class IdentityCard:
 def create_identity(
     private_key: ed25519.Ed25519PrivateKey,
     public_key: ed25519.Ed25519PublicKey,
-    metadata: Optional[dict[str, Any]] = None,
-    previous_card: Optional[IdentityCard] = None,
-    previous_private_key: Optional[ed25519.Ed25519PrivateKey] = None,
+    metadata: dict[str, Any] | None = None,
+    previous_card: IdentityCard | None = None,
+    previous_private_key: ed25519.Ed25519PrivateKey | None = None,
 ) -> IdentityCard:
     """Create a self-signed identity card for an Ed25519 keypair.
 
@@ -130,7 +127,7 @@ def create_identity(
         A fully self-signed ``IdentityCard``.
     """
     did = derive_did(public_key)
-    created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    created = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     pub_b58 = _multibase_encode(public_key_bytes(public_key))
     key_id = f"{did}#keys-1"
 
@@ -190,7 +187,7 @@ def create_identity(
     return card
 
 
-def verify_key_rotation(card: IdentityCard) -> Optional[dict[str, Any]]:
+def verify_key_rotation(card: IdentityCard) -> dict[str, Any] | None:
     """Verify the transition proof on a rotated identity card.
 
     When a card carries a ``rotation`` entry in its metadata, this checks

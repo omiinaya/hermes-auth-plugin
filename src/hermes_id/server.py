@@ -44,7 +44,6 @@ Admin Authentication
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import os
@@ -52,15 +51,14 @@ import secrets
 import sqlite3
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
-from urllib.parse import urljoin
+from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519
-from fastapi import FastAPI, HTTPException, Header, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -69,7 +67,6 @@ from hermes_id.crypto import (
     _b64,
     _unb64,
     generate_challenge,
-    public_key_bytes,
     sign,
     verify,
 )
@@ -202,12 +199,12 @@ class AuthServer:
 
     def __init__(
         self,
-        identity_dir: Optional[str] = None,
-        db_path: Optional[str] = None,
+        identity_dir: str | None = None,
+        db_path: str | None = None,
         token_ttl: int = _TOKEN_TTL,
         challenge_ttl: int = _CHALLENGE_TTL,
-        admin_key: Optional[str] = None,
-        cors_origins: Optional[list[str]] = None,
+        admin_key: str | None = None,
+        cors_origins: list[str] | None = None,
         rate_limit_max: int = 30,
         rate_limit_window: float = 60.0,
     ):
@@ -216,9 +213,9 @@ class AuthServer:
         self._challenge_ttl = challenge_ttl
 
         # Cached keypair (loaded on first use, avoids decrypting on every request)
-        self._cached_private_key: Optional[ed25519.Ed25519PrivateKey] = None
-        self._cached_public_key: Optional[ed25519.Ed25519PublicKey] = None
-        self._cached_card: Optional[IdentityCard] = None
+        self._cached_private_key: ed25519.Ed25519PrivateKey | None = None
+        self._cached_public_key: ed25519.Ed25519PublicKey | None = None
+        self._cached_card: IdentityCard | None = None
 
         # Admin key
         self._admin_key = admin_key or os.environ.get("HERMES_ID_ADMIN_KEY", "")
@@ -398,7 +395,7 @@ class AuthServer:
         signature = sign(private_key, payload_bytes)
         return _b64(payload_bytes) + "." + _b64(signature)
 
-    def _parse_token(self, token: str) -> Optional[dict[str, Any]]:
+    def _parse_token(self, token: str) -> dict[str, Any] | None:
         """Parse and verify the token signature and expiration.
 
         Returns the payload dict if valid, None otherwise.
@@ -435,7 +432,7 @@ class AuthServer:
         except Exception:
             return None
 
-    def verify_token(self, token: str) -> Optional[dict[str, Any]]:
+    def verify_token(self, token: str) -> dict[str, Any] | None:
         """Verify a token, including checking the invalidation list.
 
         Returns the payload dict if valid, None otherwise.
@@ -561,7 +558,7 @@ class AuthServer:
                 card_data = json.loads(req.identity_card)
                 card = IdentityCard(**card_data)
             except (json.JSONDecodeError, TypeError) as e:
-                raise HTTPException(400, f"Invalid identity card: {e}")
+                raise HTTPException(400, f"Invalid identity card: {e}") from e
 
             # 4. Verify identity card self-signature
             if not verify_identity_card(card):
@@ -596,7 +593,7 @@ class AuthServer:
             try:
                 sig_bytes = _unb64(req.signature_b64)
             except Exception as e:
-                raise HTTPException(400, f"Invalid signature encoding: {e}")
+                raise HTTPException(400, f"Invalid signature encoding: {e}") from e
 
             pub_b64 = card.public_key_multibase
             if not pub_b64:
@@ -605,7 +602,7 @@ class AuthServer:
                 pub_raw = _unb64(pub_b64[1:])
                 public_key = ed25519.Ed25519PublicKey.from_public_bytes(pub_raw)
             except Exception as e:
-                raise HTTPException(400, f"Cannot parse public key: {e}")
+                raise HTTPException(400, f"Cannot parse public key: {e}") from e
 
             if not verify(public_key, challenge, sig_bytes):
                 raise HTTPException(401, "Challenge signature invalid")
@@ -712,10 +709,10 @@ class AuthServer:
 
         @app.get("/agents")
         def list_agents(
-            status: Optional[str] = Query(None, pattern="^(pending|approved|denied)$"),
+            status: str | None = Query(None, pattern="^(pending|approved|denied)$"),
             page: int = Query(1, ge=1, description="Page number (1-indexed)"),
             page_size: int = Query(_PAGE_SIZE, ge=1, le=200, alias="page_size"),
-            search: Optional[str] = Query(None, min_length=1, max_length=100),
+            search: str | None = Query(None, min_length=1, max_length=100),
             x_admin_key: str = Header(""),
         ):
             """List all registered agents. Requires admin key."""
@@ -783,7 +780,7 @@ class AuthServer:
                 card_data = json.loads(req.identity_card)
                 card = IdentityCard(**card_data)
             except (json.JSONDecodeError, TypeError) as e:
-                raise HTTPException(400, f"Invalid identity card: {e}")
+                raise HTTPException(400, f"Invalid identity card: {e}") from e
 
             if card.id != req.did:
                 raise HTTPException(400, "DID in request doesn't match identity card")
@@ -804,7 +801,7 @@ class AuthServer:
                         f"Agent already registered with status '{existing[0]}'",
                     )
 
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """INSERT INTO agents (did, identity_card, status, display_name, registered_at, updated_at, metadata)
                        VALUES (?, ?, 'pending', ?, ?, ?, ?)""",
@@ -841,7 +838,7 @@ class AuthServer:
                         f"Agent is already '{existing[0]}' (can only approve 'pending' agents)",
                     )
 
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     "UPDATE agents SET status = 'approved', approved_at = ?, updated_at = ? WHERE did = ?",
                     (now, now, did),
@@ -873,7 +870,7 @@ class AuthServer:
                         f"Agent is already '{existing[0]}' (can only deny 'pending' agents)",
                     )
 
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     "UPDATE agents SET status = 'denied', updated_at = ? WHERE did = ?",
                     (now, did),
@@ -947,8 +944,8 @@ class AuthServer:
         host: str = _DEFAULT_HOST,
         port: int = _DEFAULT_PORT,
         log_level: str = "info",
-        ssl_certfile: Optional[str] = None,
-        ssl_keyfile: Optional[str] = None,
+        ssl_certfile: str | None = None,
+        ssl_keyfile: str | None = None,
     ) -> None:
         """Start the auth server (blocking).
 
@@ -963,7 +960,7 @@ class AuthServer:
 
         card = self._storage.get_identity_card()
         scheme = "https" if ssl_certfile else "http"
-        print(f"🔐  hermes-id Auth Server v1.2.0")
+        print("🔐  hermes-id Auth Server v1.2.0")
         print(f"    Server DID:    {card.id}")
         print(f"    Listening:     {scheme}://{host}:{port}")
         print(f"    API docs:      {scheme}://{host}:{port}/docs")
@@ -989,14 +986,14 @@ class AuthServer:
 # ---------------------------------------------------------------------------
 
 def run_server(
-    identity_dir: Optional[str] = None,
-    db_path: Optional[str] = None,
+    identity_dir: str | None = None,
+    db_path: str | None = None,
     host: str = _DEFAULT_HOST,
     port: int = _DEFAULT_PORT,
-    admin_key: Optional[str] = None,
-    cors_origins: Optional[list[str]] = None,
-    ssl_certfile: Optional[str] = None,
-    ssl_keyfile: Optional[str] = None,
+    admin_key: str | None = None,
+    cors_origins: list[str] | None = None,
+    ssl_certfile: str | None = None,
+    ssl_keyfile: str | None = None,
 ) -> None:
     """Convenience function to start the auth server."""
     server = AuthServer(
@@ -1008,7 +1005,7 @@ def run_server(
     server.run(host=host, port=port, ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
 
 
-def verify_auth_token(token: str, identity_card_path: Optional[str] = None) -> Optional[dict[str, Any]]:
+def verify_auth_token(token: str, identity_card_path: str | None = None) -> dict[str, Any] | None:
     """Standalone token verification — useful for apps that load the server's identity card.
 
     Args:

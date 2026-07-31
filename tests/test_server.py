@@ -1,19 +1,16 @@
 """Tests for the hermes-id Auth Server (FastAPI)."""
 
-import json
+import contextlib
 import os
 import threading
 import time
-from pathlib import Path
 
 import httpx
 import pytest
 
 from hermes_id.auth_client import AuthClient
-from hermes_id.crypto import _b64, generate_challenge, sign
-from hermes_id.identity import IdentityCard, create_identity
+from hermes_id.crypto import _b64
 from hermes_id.storage import IdentityStorage
-
 
 _TEST_PASSWORD = "hermes-id-test-password-2026"
 
@@ -89,14 +86,10 @@ def agent_client(server_url, client_identity):
 def register_and_approve(agent_client, admin_client):
     """Ensure the test agent is registered and approved before each test."""
     card = agent_client._storage.get_identity_card()
-    try:
+    with contextlib.suppress(httpx.HTTPStatusError):
         agent_client.register_agent(card.id, display_name="Test Agent")
-    except httpx.HTTPStatusError:
-        pass  # already registered
-    try:
+    with contextlib.suppress(httpx.HTTPStatusError):
         admin_client.approve_agent(card.id)
-    except httpx.HTTPStatusError:
-        pass  # already approved
     yield
 
 
@@ -255,7 +248,8 @@ class TestAuthorization:
     def test_unregistered_agent_fails(self, server_url):
         """An agent not in the registry should fail auth. Sign manually."""
         import tempfile
-        from hermes_id.crypto import _b64, sign as ed_sign
+
+        from hermes_id.crypto import sign as ed_sign
 
         tmp_dir = tempfile.mkdtemp()
         tmp_storage = IdentityStorage(directory=tmp_dir)
@@ -266,7 +260,6 @@ class TestAuthorization:
         unauth_client = AuthClient(server_url)  # no identity_dir
         chal = unauth_client.challenge(tmp_card.id)
 
-        import os as _os
         with tmp_storage.use_key("tmp-pass-unauth") as pk:
             from hermes_id.crypto import _unb64 as _ub
             sig = ed_sign(pk, _ub(chal["challenge_b64"]))
@@ -281,7 +274,9 @@ class TestAuthorization:
     def test_denied_agent_fails(self, server_url, admin_client):
         """A denied agent should fail auth. Sign manually."""
         import tempfile
-        from hermes_id.crypto import _b64, sign as ed_sign, _unb64 as _ub
+
+        from hermes_id.crypto import _unb64 as _ub
+        from hermes_id.crypto import sign as ed_sign
 
         tmp_dir = tempfile.mkdtemp()
         tmp_storage = IdentityStorage(directory=tmp_dir)
@@ -316,14 +311,10 @@ class TestAuthFlow:
 
         auth_cli = AuthClient(server_url, identity_dir=client_identity)
         card = auth_cli._storage.get_identity_card()
-        try:
+        with contextlib.suppress(httpx.HTTPStatusError):
             auth_cli.register_agent(card.id)
-        except httpx.HTTPStatusError:
-            pass
-        try:
+        with contextlib.suppress(httpx.HTTPStatusError):
             admin_client.approve_agent(card.id)
-        except httpx.HTTPStatusError:
-            pass
         auth_cli.close()
 
         flow = AuthFlow(server_url, identity_dir=client_identity)
@@ -352,11 +343,12 @@ class TestTLSSupport:
 
     def _gen_cert(self, tmp_path):
         """Generate a self-signed cert for localhost."""
+        import datetime
+
         from cryptography import x509
-        from cryptography.x509.oid import NameOID
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
-        import datetime
+        from cryptography.x509.oid import NameOID
 
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
@@ -409,7 +401,8 @@ class TestTLSSupport:
         t.start()
         time.sleep(2.5)
         try:
-            import urllib.request, ssl as ssl_mod
+            import ssl as ssl_mod
+            import urllib.request
             ctx = ssl_mod.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl_mod.CERT_NONE

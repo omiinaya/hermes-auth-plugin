@@ -4,35 +4,28 @@ Tests for the handshake protocol.
 Covers: full handshake flow (in-process), error cases, transport helpers.
 """
 
-import json
 import threading
 import time
 
 import pytest
 
 from hermes_id.crypto import (
-    generate_keypair,
-    sign,
-    verify,
     _b64,
     _unb64,
+    generate_challenge,
+    generate_keypair,
+)
+from hermes_id.handshake import (
+    HandshakeMessage,
+    HandshakeProtocol,
+    recv_message,
+    run_handshake_client,
+    run_handshake_server,
+    send_message,
 )
 from hermes_id.identity import (
     create_identity,
-    verify_identity_card,
 )
-from hermes_id.handshake import (
-    HandshakeProtocol,
-    HandshakeMessage,
-    HandshakeState,
-    HandshakeError,
-    send_message,
-    recv_message,
-    run_handshake_server,
-    run_handshake_client,
-)
-from hermes_id.crypto import generate_challenge
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -127,7 +120,7 @@ class TestHandshakeProtocol:
         assert confirm.payload.get("status") in ("ok", "session_established")
 
         # 5. Alice receives CONFIRM
-        final = alice_hp.handle_message(confirm)
+        _final = alice_hp.handle_message(confirm)
 
         # Both should be authenticated
         assert alice_hp.is_authenticated is True

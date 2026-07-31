@@ -1,0 +1,46 @@
+name: Publish to PyPI
+
+# Pushes a release whenever a tag like v1.2.0 is created.
+# Uses trusted publishing (OIDC) — NO PyPI token needed.
+#
+# One-time setup required (from the PyPI account owner):
+#   1. Create the project `hermes-id` on PyPI (or TestPyPI for testing)
+#   2. Publish → Add a new trusted publisher:
+#        workflow name: publish.yml
+#        environment:   pypi  (or testpypi)
+#        issuer:        https://token.actions.githubusercontent.com
+#   3. Tag and push:  git tag v1.2.0 && git push origin v1.2.0
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  id-token: write   # required for trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Check artifacts
+        run: python -m twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

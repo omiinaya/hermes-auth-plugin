@@ -18,27 +18,26 @@ The ``IdentityStorage`` class manages all three files atomically.
 import json
 import os
 import stat
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
+from datetime import UTC
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from hermes_id.crypto import (
-    generate_keypair,
-    serialize_private_key,
+    decrypt_key,
     deserialize_private_key,
     encrypt_key,
-    decrypt_key,
+    generate_keypair,
     secure_zero,
+    serialize_private_key,
 )
 from hermes_id.identity import (
     IdentityCard,
     create_identity,
     verify_identity_card,
-    format_identity_card,
 )
-
 
 # ---------------------------------------------------------------------------
 # Secure key context manager
@@ -124,12 +123,12 @@ class IdentityStorage:
     should be externally serialized.
     """
 
-    def __init__(self, directory: Optional[str] = None):
+    def __init__(self, directory: str | None = None):
         self._dir = Path(os.path.expanduser(directory or _DEFAULT_DIR))
         self._private_path = self._dir / _PRIVATE_KEY_FILE
         self._identity_path = self._dir / _IDENTITY_FILE
         self._config_path = self._dir / _CONFIG_FILE
-        self._config: Optional[StorageConfig] = None
+        self._config: StorageConfig | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -142,7 +141,7 @@ class IdentityStorage:
     def create(
         self,
         password: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> IdentityCard:
         """Generate a new identity and persist it.
 
@@ -156,7 +155,6 @@ class IdentityStorage:
         Returns:
             The newly created ``IdentityCard``.
         """
-        import time
         now = datetime_now_iso()
 
         # Generate fresh keypair
@@ -222,7 +220,7 @@ class IdentityStorage:
     def rotate(
         self,
         password: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         keep_backup: bool = True,
     ) -> IdentityCard:
         """Rotate the identity keypair.
@@ -254,7 +252,6 @@ class IdentityStorage:
                 "Run `hermes-id init` first."
             )
 
-        import time
         now = datetime_now_iso()
 
         # Load current identity
@@ -366,14 +363,14 @@ class IdentityStorage:
             f"   DID:        `{card.id}`",
             f"   Short:      `{card.did_short}`",
             f"   Created:    {config.created_at or card.created}",
-            f"   Key type:   Ed25519",
+            "   Key type:   Ed25519",
             f"   Storage:    AES-256-GCM ({config.kdf})",
             f"   Card valid: {'✅' if verify_identity_card(card) else '❌'}",
         ]
         if card.metadata:
             lines.append(f"   Metadata:   {json.dumps(card.metadata)}")
         if (card.metadata or {}).get("rotation"):
-            lines.append(f"   Rotated:    ✅ transition proof present")
+            lines.append("   Rotated:    ✅ transition proof present")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -404,7 +401,7 @@ class IdentityStorage:
     def _detect_kdf() -> str:
         """Detect which KDF will be used."""
         try:
-            from argon2.low_level import hash_secret_raw, Type  # noqa: F401
+            from argon2.low_level import Type, hash_secret_raw  # noqa: F401
             return "argon2id"
         except ImportError:
             pass
@@ -419,5 +416,5 @@ class IdentityStorage:
 
 def datetime_now_iso() -> str:
     """Current UTC timestamp in ISO-8601 format."""
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    from datetime import datetime
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

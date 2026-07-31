@@ -5,31 +5,30 @@ Covers: key generation, signing/verification, key serialization,
 key encryption/decryption, DID derivation, and session key derivation.
 """
 
-import hashlib
 import os
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from hermes_id.crypto import (
-    generate_keypair,
-    sign,
-    verify,
-    serialize_private_key,
-    deserialize_private_key,
-    serialize_public_key,
-    deserialize_public_key,
-    public_key_bytes,
-    generate_x25519_keypair,
-    x25519_shared_secret,
-    derive_session_key,
-    encrypt_key,
-    decrypt_key,
-    generate_challenge,
-    derive_did,
     CHALLENGE_SIZE,
     _b64,
     _unb64,
+    decrypt_key,
+    derive_did,
+    derive_session_key,
+    deserialize_private_key,
+    deserialize_public_key,
+    encrypt_key,
+    generate_challenge,
+    generate_keypair,
+    generate_x25519_keypair,
+    public_key_bytes,
+    serialize_private_key,
+    serialize_public_key,
+    sign,
+    verify,
+    x25519_shared_secret,
 )
 
 

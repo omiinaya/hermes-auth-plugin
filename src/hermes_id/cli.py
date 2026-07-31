@@ -22,29 +22,24 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from hermes_id import __version__ as hermes_id_version
 from hermes_id.crypto import (
-    generate_keypair,
-    sign,
-    verify,
-    public_key_bytes,
     _b64,
     _unb64,
+    sign,
+    verify,
+)
+from hermes_id.handshake import (
+    run_handshake_client,
+    run_handshake_server,
 )
 from hermes_id.identity import (
     IdentityCard,
-    create_identity,
+    format_identity_card,
     verify_identity_card,
     verify_key_rotation,
-    format_identity_card,
 )
 from hermes_id.storage import IdentityStorage
-from hermes_id.handshake import (
-    run_handshake_server,
-    run_handshake_client,
-)
-
-
-from hermes_id import __version__ as VERSION
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -143,7 +138,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     """Route parsed args to the correct handler."""
     try:
         if getattr(args, "version", False):
-            print(f"hermes-id {VERSION}")
+            print(f"hermes-id {hermes_id_version}")
             return 0
 
         command = getattr(args, "command", None)
@@ -234,7 +229,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print()
     print(f"✅ Identity created at {storage._dir}")
     print(f"   DID: {card.id}")
-    print(f"   Card valid: ✅")
+    print("   Card valid: ✅")
     print()
     print("⚠️  KEEP YOUR PASSPHRASE SAFE. It cannot be recovered.")
     print("   Your identity card (public) can be shared freely.")
@@ -261,9 +256,9 @@ def _cmd_rotate(args: argparse.Namespace) -> int:
     old_card = storage.get_identity_card()
 
     if not args.force:
-        print(f"⚠️  This will replace your current identity:")
+        print("⚠️  This will replace your current identity:")
         print(f"      Old DID: {old_card.did_short}")
-        print(f"      New DID: (generated)")
+        print("      New DID: (generated)")
         try:
             answer = input("   Continue? [y/N] ").strip().lower()
         except EOFError:
@@ -349,10 +344,10 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     print(format_identity_card(card))
     print()
     if valid:
-        print(f"✅ Identity card is VALID (self-signature verified)")
+        print("✅ Identity card is VALID (self-signature verified)")
         return 0
     else:
-        print(f"❌ Identity card is INVALID (signature mismatch or missing)")
+        print("❌ Identity card is INVALID (signature mismatch or missing)")
         return 1
 
 
@@ -405,10 +400,11 @@ def _cmd_verify_sig(args: argparse.Namespace) -> int:
 
     # Read signature (parameter can be base64 string or file path)
     sig_param = args.signature
-    if Path(sig_param).exists():
-        sig_b64 = Path(sig_param).read_text().strip()
-    else:
-        sig_b64 = sig_param
+    sig_b64 = (
+        Path(sig_param).read_text().strip()
+        if Path(sig_param).exists()
+        else sig_param
+    )
 
     try:
         sig_bytes = _unb64(sig_b64)
@@ -431,12 +427,12 @@ def _cmd_verify_sig(args: argparse.Namespace) -> int:
 
     data = Path(args.file).read_bytes()
     if verify(public_key, data, sig_bytes):
-        print(f"✅ Signature VALID")
+        print("✅ Signature VALID")
         print(f"   Signed by: {card.did_short}")
-        print(f"   Key type:  Ed25519")
+        print("   Key type:  Ed25519")
         return 0
     else:
-        print(f"❌ Signature INVALID")
+        print("❌ Signature INVALID")
         return 1
 
 
@@ -464,7 +460,7 @@ def _cmd_handshake(args: argparse.Namespace) -> int:
     identity_card = storage.get_identity_card()
 
     if args.handshake_cmd == "listen":
-        print(f"🎧 Starting handshake server...")
+        print("🎧 Starting handshake server...")
         run_handshake_server(
             identity_card=identity_card,
             private_key=private_key,
@@ -485,10 +481,9 @@ def _cmd_handshake(args: argparse.Namespace) -> int:
         print(f"🔗 Connecting to {host}:{port}...")
 
         def _on_verify(peer_card: IdentityCard) -> bool:
-            if args.peer_did:
-                if peer_card.id != args.peer_did:
-                    print(f"❌ Peer DID mismatch: expected {args.peer_did}, got {peer_card.id}")
-                    return False
+            if args.peer_did and peer_card.id != args.peer_did:
+                print(f"❌ Peer DID mismatch: expected {args.peer_did}, got {peer_card.id}")
+                return False
             return True
 
         success, peer_card, session_key = run_handshake_client(
@@ -501,7 +496,7 @@ def _cmd_handshake(args: argparse.Namespace) -> int:
         )
 
         if success:
-            print(f"✅ Handshake successful!")
+            print("✅ Handshake successful!")
             if session_key:
                 print(f"   Session key: {_b64(session_key)[:16]}...")
             return 0

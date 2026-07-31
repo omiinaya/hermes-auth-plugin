@@ -35,12 +35,9 @@ Token verification:
 
 from __future__ import annotations
 
-import json
-import time
-from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from hermes_id.auth_client import AuthClient
@@ -73,8 +70,8 @@ class HermesIDAuth:
         self._server_url = server_url
         self._cache_ttl = cache_ttl
         self._timeout = timeout
-        self._client: Optional[AuthClient] = None
-        self._card: Optional[dict[str, Any]] = None
+        self._client: AuthClient | None = None
+        self._card: dict[str, Any] | None = None
         self._card_loaded_at: float = 0
 
     def _get_client(self) -> AuthClient:
@@ -87,7 +84,7 @@ class HermesIDAuth:
 
     def verify(
         self,
-        credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),  # noqa: B008 — FastAPI idiom
     ) -> dict[str, Any]:
         """Verify a Bearer token and return its payload.
 
@@ -119,7 +116,7 @@ class HermesIDAuth:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Token verification failed: {e}",
-            )
+            ) from e
 
         if payload is None or not payload.get("valid"):
             raise HTTPException(

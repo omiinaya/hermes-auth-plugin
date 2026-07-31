@@ -4,18 +4,12 @@ Fixtures for hermes-id tests.
 Shared test helpers: keypair generation, identity cards, temp directories.
 """
 
-import json
-import os
 import tempfile
-from pathlib import Path
 
 import pytest
 
 from hermes_id.crypto import (
     generate_keypair,
-    public_key_bytes,
-    derive_did,
-    _b64,
 )
 from hermes_id.identity import (
     IdentityCard,

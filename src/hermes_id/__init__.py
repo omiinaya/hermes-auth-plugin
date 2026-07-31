@@ -21,29 +21,29 @@ without any central registry or PKI.
 __version__ = "1.2.0"
 
 from hermes_id.crypto import (
-    generate_keypair,
-    sign,
-    verify,
-    encrypt_key,
     decrypt_key,
     derive_session_key,
+    encrypt_key,
+    generate_keypair,
     secure_zero,
+    sign,
+    verify,
+)
+from hermes_id.handshake import (
+    HandshakeError,
+    HandshakeMessage,
+    HandshakeProtocol,
+    HandshakeState,
 )
 from hermes_id.identity import (
     IdentityCard,
     create_identity,
-    verify_identity_card,
     format_identity_card,
+    verify_identity_card,
 )
 from hermes_id.storage import (
     IdentityStorage,
     StorageConfig,
-)
-from hermes_id.handshake import (
-    HandshakeProtocol,
-    HandshakeState,
-    HandshakeMessage,
-    HandshakeError,
 )
 
 __all__ = [
@@ -56,6 +56,7 @@ __all__ = [
     "encrypt_key",
     "decrypt_key",
     "derive_session_key",
+    "secure_zero",
     # Identity
     "IdentityCard",
     "create_identity",

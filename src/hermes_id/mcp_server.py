@@ -19,12 +19,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-from pathlib import Path
-from typing import Any, Optional
 
 from hermes_id.crypto import _b64, _unb64, sign, verify
 from hermes_id.identity import IdentityCard, verify_identity_card, verify_key_rotation
-from hermes_id.server import verify_auth_token
 from hermes_id.storage import IdentityStorage
 
 try:
@@ -43,11 +40,11 @@ except ImportError:
 class HermesIDMCPServer:
     """MCP server exposing hermes-id tools for agent-to-agent authentication."""
 
-    def __init__(self, identity_dir: Optional[str] = None):
+    def __init__(self, identity_dir: str | None = None):
         self._storage = IdentityStorage(directory=identity_dir)
         self._app = Server("hermes-id")
 
-    def _get_card(self) -> Optional[IdentityCard]:
+    def _get_card(self) -> IdentityCard | None:
         """Get the identity card if configured."""
         try:
             return self._storage.get_identity_card()

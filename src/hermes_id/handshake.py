@@ -38,35 +38,31 @@ Security properties:
 """
 
 import json
-import os
 import socket
 import struct
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional, Tuple
+from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
 
 from hermes_id.crypto import (
-    generate_challenge,
-    generate_x25519_keypair,
-    x25519_shared_secret,
-    derive_session_key,
-    sign,
-    verify,
-    serialize_public_key as serialize_ed25519_pub,
-    deserialize_public_key as deserialize_ed25519_pub,
-    CHALLENGE_SIZE,
     _b64,
     _unb64,
+    derive_session_key,
+    generate_challenge,
+    generate_x25519_keypair,
+    sign,
+    verify,
+    x25519_shared_secret,
 )
 from hermes_id.identity import (
     IdentityCard,
     verify_identity_card,
 )
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -186,15 +182,15 @@ class HandshakeProtocol:
     private_key: ed25519.Ed25519PrivateKey
     is_responder: bool = False
     peer_did: str = ""
-    on_verify: Optional[OnVerifyCallback] = None
-    on_confirm: Optional[OnConfirmCallback] = None
+    on_verify: OnVerifyCallback | None = None
+    on_confirm: OnConfirmCallback | None = None
 
     # Internal state
     _state: HandshakeState = field(default=HandshakeState.IDLE, init=False)
     _challenge: bytes = field(default=b"", init=False)
-    _peer_card: Optional[IdentityCard] = field(default=None, init=False)
-    _session_key: Optional[bytes] = field(default=None, init=False)
-    _x25519_priv: Optional[x25519.X25519PrivateKey] = field(default=None, init=False)
+    _peer_card: IdentityCard | None = field(default=None, init=False)
+    _session_key: bytes | None = field(default=None, init=False)
+    _x25519_priv: x25519.X25519PrivateKey | None = field(default=None, init=False)
     _peer_did_verified: bool = field(default=False, init=False)
 
     # ------------------------------------------------------------------
@@ -525,12 +521,12 @@ class HandshakeProtocol:
         )
 
     @property
-    def peer_card(self) -> Optional[IdentityCard]:
+    def peer_card(self) -> IdentityCard | None:
         """The peer's verified identity card (None until CONFIRMED)."""
         return self._peer_card
 
     @property
-    def session_key(self) -> Optional[bytes]:
+    def session_key(self) -> bytes | None:
         """Derived session key (None in auth-only mode or before CONFIRMED)."""
         return self._session_key
 
@@ -565,8 +561,8 @@ def recv_message(sock: socket.socket, timeout: float = _HANDSHAKE_TIMEOUT) -> Ha
     # Read 4-byte length prefix
     try:
         header = _recv_exact(sock, 4)
-    except (OSError, socket.timeout) as e:
-        raise HandshakeError(f"Connection error: {e}")
+    except (TimeoutError, OSError) as e:
+        raise HandshakeError(f"Connection error: {e}") from e
 
     payload_len = struct.unpack("!I", header)[0]
     if payload_len > _MAX_MESSAGE_SIZE:
@@ -576,8 +572,8 @@ def recv_message(sock: socket.socket, timeout: float = _HANDSHAKE_TIMEOUT) -> Ha
 
     try:
         payload = _recv_exact(sock, payload_len)
-    except (OSError, socket.timeout) as e:
-        raise HandshakeError(f"Connection error: {e}")
+    except (TimeoutError, OSError) as e:
+        raise HandshakeError(f"Connection error: {e}") from e
 
     return HandshakeMessage.decode(header + payload)
 
@@ -604,9 +600,9 @@ def run_handshake_server(
     private_key: ed25519.Ed25519PrivateKey,
     host: str = _DEFAULT_HOST,
     port: int = _DEFAULT_PORT,
-    on_verify: Optional[OnVerifyCallback] = None,
-    on_confirm: Optional[OnConfirmCallback] = None,
-    stop_event: Optional[threading.Event] = None,
+    on_verify: OnVerifyCallback | None = None,
+    on_confirm: OnConfirmCallback | None = None,
+    stop_event: threading.Event | None = None,
     rate_limit: int = 10,
     rate_window: float = 60.0,
 ) -> None:
@@ -645,7 +641,7 @@ def run_handshake_server(
                 break
             try:
                 conn, addr = server.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
 
             # Rate limit check
@@ -681,9 +677,9 @@ def run_handshake_client(
     peer_did: str,
     host: str = _DEFAULT_HOST,
     port: int = _DEFAULT_PORT,
-    on_verify: Optional[OnVerifyCallback] = None,
-    on_confirm: Optional[OnConfirmCallback] = None,
-) -> Tuple[bool, Optional[IdentityCard], Optional[bytes]]:
+    on_verify: OnVerifyCallback | None = None,
+    on_confirm: OnConfirmCallback | None = None,
+) -> tuple[bool, IdentityCard | None, bytes | None]:
     """Connect to a handshake server and perform mutual authentication.
 
     Returns:
@@ -717,7 +713,7 @@ def run_handshake_client(
         # 3. Send AUTH
         auth_msg = hp.handle_message(challenge_msg)
         send_message(sock, auth_msg)
-        print(f"→ Sent AUTH (identity card)")
+        print("→ Sent AUTH (identity card)")
 
         # 4. Receive CONFIRM
         confirm_msg = recv_message(sock)
@@ -729,11 +725,11 @@ def run_handshake_client(
             send_message(sock, final_msg)
 
         if hp.is_authenticated:
-            print(f"✅ Mutual authentication successful!")
+            print("✅ Mutual authentication successful!")
             print(f"   Peer DID: {hp.peer_card.id if hp.peer_card else 'N/A'}")
             return True, hp.peer_card, hp.session_key
         else:
-            print(f"❌ Authentication failed")
+            print("❌ Authentication failed")
             return False, None, None
 
     except (HandshakeError, OSError) as e:
@@ -747,8 +743,8 @@ def _handle_connection(
     conn: socket.socket,
     identity_card: IdentityCard,
     private_key: ed25519.Ed25519PrivateKey,
-    on_verify: Optional[OnVerifyCallback] = None,
-    on_confirm: Optional[OnConfirmCallback] = None,
+    on_verify: OnVerifyCallback | None = None,
+    on_confirm: OnConfirmCallback | None = None,
 ) -> None:
     """Handle a single handshake connection (responder side)."""
     hp = HandshakeProtocol(
@@ -766,11 +762,11 @@ def _handle_connection(
     # 2. Send CHALLENGE
     challenge_msg = hp.handle_message(hello_msg)
     send_message(conn, challenge_msg)
-    print(f"→ Sent CHALLENGE")
+    print("→ Sent CHALLENGE")
 
     # 3. Receive AUTH
     auth_msg = recv_message(conn)
-    print(f"← Received AUTH")
+    print("← Received AUTH")
 
     # 4. Send CONFIRM
     confirm_msg = hp.handle_message(auth_msg)
@@ -783,7 +779,7 @@ def _handle_connection(
             final_msg = recv_message(conn)
             hp.handle_message(final_msg)
             if hp.is_authenticated:
-                print(f"✅ Mutual authentication successful!")
+                print("✅ Mutual authentication successful!")
                 print(f"   Peer DID: {hp.peer_card.id if hp.peer_card else 'N/A'}")
         except HandshakeError:
             pass

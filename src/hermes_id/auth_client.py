@@ -39,15 +39,12 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
 from hermes_id.crypto import _b64, _unb64, sign
-from hermes_id.identity import IdentityCard
 from hermes_id.storage import IdentityStorage
 
 
@@ -69,9 +66,9 @@ class AuthClient:
     def __init__(
         self,
         server_url: str,
-        identity_dir: Optional[str] = None,
+        identity_dir: str | None = None,
         timeout: float = 30.0,
-        admin_key: Optional[str] = None,
+        admin_key: str | None = None,
     ):
         self._server_url = server_url.rstrip("/")
         self._timeout = timeout
@@ -124,7 +121,7 @@ class AuthClient:
         resp.raise_for_status()
         return resp.json()
 
-    def sign_challenge(self, challenge_b64: str, password: Optional[str] = None) -> str:
+    def sign_challenge(self, challenge_b64: str, password: str | None = None) -> str:
         """Sign a challenge with the local identity's private key.
 
         Args:
@@ -160,7 +157,7 @@ class AuthClient:
         did: str,
         challenge_b64: str,
         signature_b64: str,
-        identity_card: Optional[str] = None,
+        identity_card: str | None = None,
     ) -> dict[str, Any]:
         """Authenticate with the auth server.
 
@@ -191,7 +188,7 @@ class AuthClient:
         resp.raise_for_status()
         return resp.json()
 
-    def verify_token(self, token: str) -> Optional[dict[str, Any]]:
+    def verify_token(self, token: str) -> dict[str, Any] | None:
         """Verify a signed auth token with the auth server.
 
         Args:
@@ -210,7 +207,7 @@ class AuthClient:
             return data
         return None
 
-    def refresh_token(self, token: str) -> Optional[dict[str, Any]]:
+    def refresh_token(self, token: str) -> dict[str, Any] | None:
         """Refresh an expiring token.
 
         Returns a new token with extended TTL.
@@ -243,9 +240,9 @@ class AuthClient:
     def register_agent(
         self,
         did: str,
-        identity_card: Optional[str] = None,
+        identity_card: str | None = None,
         display_name: str = "",
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Register this agent with the auth server.
 
@@ -285,10 +282,10 @@ class AuthClient:
 
     def list_agents(
         self,
-        status: Optional[str] = None,
+        status: str | None = None,
         page: int = 1,
         page_size: int = 50,
-        search: Optional[str] = None,
+        search: str | None = None,
     ) -> dict[str, Any]:
         """List all agents in the registry. Requires admin key.
 
@@ -355,7 +352,7 @@ class AuthFlow:
         token = flow.login()
     """
 
-    def __init__(self, server_url: str, identity_dir: Optional[str] = None):
+    def __init__(self, server_url: str, identity_dir: str | None = None):
         self._client = AuthClient(server_url, identity_dir=identity_dir)
         self._storage = IdentityStorage(directory=identity_dir) if identity_dir else None
 

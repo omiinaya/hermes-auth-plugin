@@ -14,7 +14,6 @@ import argparse
 import json
 import os
 import sys
-from typing import Optional
 
 from hermes_id.auth_client import AuthClient
 
@@ -59,7 +58,7 @@ def _get_client(args: argparse.Namespace) -> AuthClient:
     return AuthClient(args.server, admin_key=admin_key, timeout=args.timeout)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     client = _get_client(args)
