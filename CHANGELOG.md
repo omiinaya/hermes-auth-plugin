@@ -17,6 +17,22 @@
 ### Changed
 - Version bumped to 1.2.0
 - `status` shows a "Rotated: ✅" line when the card carries a transition proof
+- **CI migrated to self-hosted runner** (`runner-hermes-id` on Debian 12 LXC) —
+  GitHub Free Actions minutes budget was exhausted, blocking all hosted jobs
+  (`runner_id: 0` instant failures). `runs-on: [self-hosted, ubuntu-latest]`
+  bypasses the billing gate
+- **CI Python setup uses system python3.11 + job-local venv** —
+  `actions/setup-python@v5` has no prebuilt builds for Debian 12, and the
+  system python is a root-owned hermes venv that rejects pip writes
+- **New `[dev]` extra** (`pytest`, `ruff`, `build`, `twine`) — CI installs
+  `.[all,dev]`
+- **Ruff lint fixed end-to-end**: added `[tool.ruff]` config (E,F,W,I,N,UP,B,SIM,
+  ignore E501; tests exempt from B017/BLE001), fixed 247 violations (import
+  sorting, unused imports, UP045 annotations, F541 f-strings, B904 raise-from,
+  SIM102/105/108, N812, F841, RUF059)
+- Docker build job removed from CI (no Docker daemon on the runner)
+- `.github/workflows/publish.yml` added — PyPI trusted publishing (OIDC,
+  no token); requires one-time PyPI project + trusted publisher setup
 
 ## 1.1.0 — 2026-07-30
 
