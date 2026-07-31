@@ -48,12 +48,3 @@ jobs:
           python -c "from hermes_id.server import AuthServer; print('OK: server')"
           python -c "from hermes_id.auth_client import AuthClient; print('OK: auth_client')"
           python -c "from hermes_id.mcp_server import HermesIDMCPServer; print('OK: mcp_server')"
-
-  docker:
-    runs-on: [self-hosted, ubuntu-latest]
-    needs: test
-    if: github.ref == 'refs/heads/master'
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -t hermes-id-auth .
