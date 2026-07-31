@@ -11,17 +11,20 @@ jobs:
     runs-on: [self-hosted, ubuntu-latest]
     strategy:
       matrix:
-        # Debian 12 self-hosted runner: 3.11 not in setup-python prebuilt
-        # cache (system python3.11 covers it locally); 3.12/3.13 available.
-        python-version: ["3.12", "3.13"]
+        # Debian 12 self-hosted runner: actions/setup-python has NO prebuilt
+        # versions for Debian 12 (3.11/3.12/3.13 all fail). Use the system
+        # Python 3.11 which is pre-installed on the runner.
+        python-version: ["3.11"]
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
+        run: |
+          PY=$(command -v python3.11 || command -v python3)
+          echo "Using system Python: $PY ($($PY --version 2>&1))"
+          echo "$(dirname "$PY")" >> "$GITHUB_PATH"
+          python3 --version
 
       - name: Install dependencies
         run: |
