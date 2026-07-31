@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-latest]
     environment: pypi
     steps:
       - uses: actions/checkout@v4

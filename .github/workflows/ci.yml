@@ -8,10 +8,12 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-latest]
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        # Debian 12 self-hosted runner: 3.11 not in setup-python prebuilt
+        # cache (system python3.11 covers it locally); 3.12/3.13 available.
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +44,7 @@ jobs:
           python -c "from hermes_id.mcp_server import HermesIDMCPServer; print('OK: mcp_server')"
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-latest]
     needs: test
     if: github.ref == 'refs/heads/master'
     steps:
