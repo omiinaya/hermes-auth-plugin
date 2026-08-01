@@ -94,6 +94,7 @@ class HermesIDAuth:
         revocation_ttl: float = 300.0,
         timeout: float = 5.0,
         allow_stale_card: bool = True,
+        verify: bool | str = True,
     ):
         self._server_url = (server_url or os.environ.get(ENV_SERVER_URL, "")).rstrip("/")
         self._project = project or os.environ.get(ENV_PROJECT, "")
@@ -101,6 +102,17 @@ class HermesIDAuth:
         self._card_max_age = card_max_age
         self._timeout = timeout
         self._allow_stale_card = allow_stale_card
+        # TLS verification: explicit arg > HERMES_AUTH_VERIFY env (path to a
+        # CA bundle, or "true"/"false") > default True.
+        if verify is True and os.environ.get("HERMES_AUTH_VERIFY"):
+            env_verify = os.environ["HERMES_AUTH_VERIFY"].strip().lower()
+            if env_verify in ("false", "0", "no"):
+                verify = False
+            elif env_verify in ("true", "1", "yes"):
+                verify = True
+            else:
+                verify = env_verify  # CA bundle path
+        self._verify = verify
 
         if not self._server_url:
             raise ValueError(
@@ -115,7 +127,9 @@ class HermesIDAuth:
 
         self._card: dict[str, Any] | None = None
         self._card_loaded_at: float = 0.0
-        self._revocation = RevocationChecker(self._server_url, ttl=revocation_ttl, timeout=timeout)
+        self._revocation = RevocationChecker(
+            self._server_url, ttl=revocation_ttl, timeout=timeout, verify=verify
+        )
 
     # -- server card ------------------------------------------------------
 
@@ -136,6 +150,7 @@ class HermesIDAuth:
             timeout=self._timeout,
             max_age=self._card_max_age,
             allow_stale=self._allow_stale_card,
+            verify=self._verify,
         )
         self._card_loaded_at = now
         return self._card

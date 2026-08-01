@@ -41,6 +41,7 @@ Usage (FastAPI): see ``hermes_id.fastapi_middleware.HermesIDAuth``.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -195,6 +196,7 @@ def load_server_card(
     timeout: float = _DEFAULT_TIMEOUT,
     max_age: float = _DEFAULT_CARD_MAX_AGE,
     allow_stale: bool = True,
+    verify: bool | str = True,
 ) -> dict[str, Any]:
     """Fetch and verify the auth server's identity card, caching it to disk.
 
@@ -215,6 +217,8 @@ def load_server_card(
             re-fetched (default 3600).
         allow_stale: If True, fall back to a stale cached card when the
             server is unreachable.
+        verify: TLS verification — True (default), a CA bundle path, or
+            False to disable (self-signed testing only).
 
     Returns:
         The server identity card as a dict (JSON-serializable).
@@ -227,6 +231,16 @@ def load_server_card(
         import httpx
     except ImportError as e:  # pragma: no cover
         raise AuthError("untrusted_server", "httpx is required to fetch the server card") from e
+
+    # TLS verification: explicit arg > HERMES_AUTH_VERIFY env > default True
+    if verify is True and os.environ.get("HERMES_AUTH_VERIFY"):
+        env_verify = os.environ["HERMES_AUTH_VERIFY"].strip().lower()
+        if env_verify in ("false", "0", "no"):
+            verify = False
+        elif env_verify in ("true", "1", "yes"):
+            verify = True
+        else:
+            verify = env_verify  # CA bundle path
 
     cache_file = Path(cache_path) if cache_path else default_card_cache_path(server_url)
 
@@ -245,7 +259,7 @@ def load_server_card(
 
     def _fetch() -> dict[str, Any]:
         try:
-            resp = httpx.get(f"{server_url.rstrip('/')}/identity", timeout=timeout)
+            resp = httpx.get(f"{server_url.rstrip('/')}/identity", timeout=timeout, verify=verify)
             resp.raise_for_status()
             data = resp.json()
             card = IdentityCard.from_json(json.dumps(data))
@@ -302,10 +316,12 @@ class RevocationChecker:
         server_url: str,
         ttl: float = _DEFAULT_REVOCATION_TTL,
         timeout: float = _DEFAULT_TIMEOUT,
+        verify: bool | str = True,
     ):
         self._server_url = server_url.rstrip("/")
         self._ttl = ttl
         self._timeout = timeout
+        self._verify = verify
         self._cache: dict[str, tuple[bool, float]] = {}  # token_id -> (revoked, checked_at)
 
     def is_revoked(self, token: str, token_id: str) -> bool:
@@ -328,6 +344,7 @@ class RevocationChecker:
                 f"{self._server_url}/verify",
                 json={"token": token},
                 timeout=self._timeout,
+                verify=self._verify,
             )
             resp.raise_for_status()
             data = resp.json()

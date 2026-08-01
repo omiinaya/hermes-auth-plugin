@@ -435,6 +435,89 @@ class TestHermesIDAuth:
 
 
 # ---------------------------------------------------------------------------
+# fastapi_plugin — drop-in agent-auth router
+# ---------------------------------------------------------------------------
+
+class TestFastAPIPlugin:
+    def _make_app(self, server_url, project, auth_cache_dir):
+        pytest.importorskip("fastapi")
+        from fastapi import FastAPI
+
+        from hermes_id.fastapi_middleware import HermesIDAuth
+        from hermes_id.fastapi_plugin import install_agent_auth
+
+        app = FastAPI()
+        install_agent_auth(app, auth=HermesIDAuth(
+            server_url=server_url, project=project, cache_dir=str(auth_cache_dir)
+        ))
+        return app
+
+    def _client(self, app):
+        from fastapi.testclient import TestClient
+
+        return TestClient(app)
+
+    def test_status_public(self, server_url, auth_cache_dir):
+        app = self._make_app(server_url, "spacetime-test", auth_cache_dir)
+        resp = self._client(app).get("/hermes-id/agent/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["configured"] is True
+        assert body["project"] == "spacetime-test"
+        assert body["server_card_cached"] is True
+
+    def test_me_requires_token(self, server_url, auth_cache_dir):
+        app = self._make_app(server_url, "spacetime-test", auth_cache_dir)
+        resp = self._client(app).get("/hermes-id/agent/me")
+        assert resp.status_code == 401
+
+    def test_me_with_valid_token(self, server_url, token, auth_cache_dir):
+        app = self._make_app(server_url, "spacetime-test", auth_cache_dir)
+        resp = self._client(app).get(
+            "/hermes-id/agent/me", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["authenticated"] is True
+        assert body["did"].startswith("did:hermes:")
+        assert body["aud"] == "spacetime-test"
+
+    def test_me_wrong_audience_401(self, server_url, token, auth_cache_dir):
+        app = self._make_app(server_url, "spacetime-other", auth_cache_dir)
+        resp = self._client(app).get(
+            "/hermes-id/agent/me", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert resp.status_code == 401
+
+    def test_env_driven_install(self, monkeypatch, server_url, token, auth_cache_dir):
+        pytest.importorskip("fastapi")
+        from fastapi import FastAPI
+
+        from hermes_id.fastapi_plugin import install_agent_auth
+
+        monkeypatch.setenv("HERMES_AUTH_SERVER_URL", server_url)
+        monkeypatch.setenv("HERMES_AUTH_PROJECT", "spacetime-test")
+        monkeypatch.setenv("HERMES_AUTH_CACHE_DIR", str(auth_cache_dir))
+        # install_agent_auth reads env; cache_dir comes through HermesIDAuth env
+        import os
+
+        from hermes_id.fastapi_middleware import HermesIDAuth
+
+        app = FastAPI()
+        install_agent_auth(app, auth=HermesIDAuth(
+            server_url=os.environ["HERMES_AUTH_SERVER_URL"],
+            project=os.environ["HERMES_AUTH_PROJECT"],
+            cache_dir=str(auth_cache_dir),
+        ))
+        from fastapi.testclient import TestClient
+
+        resp = TestClient(app).get(
+            "/hermes-id/agent/me", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # TokenCache — per-project persistent token cache
 # ---------------------------------------------------------------------------
 

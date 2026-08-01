@@ -69,12 +69,13 @@ class AuthClient:
         identity_dir: str | None = None,
         timeout: float = 30.0,
         admin_key: str | None = None,
+        verify: bool | str = True,
     ):
         self._server_url = server_url.rstrip("/")
         self._timeout = timeout
         self._storage = IdentityStorage(directory=identity_dir) if identity_dir else None
         self._admin_key = admin_key or os.environ.get("HERMES_ID_ADMIN_KEY", "")
-        self._client = httpx.Client(timeout=timeout)
+        self._client = httpx.Client(timeout=timeout, verify=verify)
 
     def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -381,8 +382,13 @@ class AuthFlow:
         token = flow.login()
     """
 
-    def __init__(self, server_url: str, identity_dir: str | None = None):
-        self._client = AuthClient(server_url, identity_dir=identity_dir)
+    def __init__(
+        self,
+        server_url: str,
+        identity_dir: str | None = None,
+        verify: bool | str = True,
+    ):
+        self._client = AuthClient(server_url, identity_dir=identity_dir, verify=verify)
         self._storage = IdentityStorage(directory=identity_dir) if identity_dir else None
 
     def login(self, aud: str | None = None) -> tuple[str, dict[str, Any]]:
