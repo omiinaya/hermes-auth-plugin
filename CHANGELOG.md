@@ -55,7 +55,25 @@ hermes-id Auth Server. Closes the verified v1.2 gaps (audit 2026-07-30):
   — no port collisions or orphaned listeners between runs.
 - `HERMES_ID_PASSPHRASE` is set inside the module fixture (restored after),
   not at import — no cross-module env clobbering.
-- Full suite: **172 passed** (was 140).
+- Full suite: **192 passed** (was 140).
+
+### Deploy & operations (this release)
+
+- **Self-describing encrypted-blob header** (`HID2` + kdf id) — identity
+  files are portable across environments. Fixed the production failure
+  where an identity created with argon2-cffi installed (Argon2id KDF) could
+  not be decrypted on a host without it (scrypt/PBKDF2 fallback → InvalidTag
+  on every /challenge). Legacy v1 blobs try each available KDF, validated by
+  the GCM tag. scrypt now passes `maxmem` (OpenSSL 3.x silently rejected the
+  N=2^20,r=8 ~1 GiB allocation with its 32 MiB default).
+- **`HERMES_AUTH_VERIFY` env** — CA bundle path (or true/false) for TLS
+  servers, honored by the SDK, `HermesIDAuth`, `AuthClient`, `AuthFlow`.
+- **`hermes_id.fastapi_plugin`** — `install_agent_auth(app)` mounts
+  `/hermes-id/agent/me` (auth-required) + `/hermes-id/agent/status`
+  (public) in 3 lines — the fleet rollout enabler.
+- **Registration merges projects** — re-registering the same DID unions its
+  requested projects (one agent, many projects); scope growth resets an
+  approved agent to pending for re-approval. No-op duplicates still 409.
 
 ## 1.2.0 — 2026-07-31
 
