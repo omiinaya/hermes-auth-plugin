@@ -75,6 +75,15 @@ class AuthClient:
         self._timeout = timeout
         self._storage = IdentityStorage(directory=identity_dir) if identity_dir else None
         self._admin_key = admin_key or os.environ.get("HERMES_ID_ADMIN_KEY", "")
+        # TLS verification: explicit arg > HERMES_AUTH_VERIFY env > default True
+        if verify is True and os.environ.get("HERMES_AUTH_VERIFY"):
+            env_verify = os.environ["HERMES_AUTH_VERIFY"].strip().lower()
+            if env_verify in ("false", "0", "no"):
+                verify = False
+            elif env_verify in ("true", "1", "yes"):
+                verify = True
+            else:
+                verify = env_verify  # CA bundle path
         self._client = httpx.Client(timeout=timeout, verify=verify)
 
     def close(self) -> None:
