@@ -880,36 +880,58 @@ class AuthServer:
 
             conn = self._db_connect()
             try:
-                # Check if already registered
+                # Check if already registered — if so, MERGE the requested
+                # projects (an agent registers once per DID; each bootstrap
+                # adds the projects it wants). Growing the project scope
+                # resets an approved agent to pending for re-approval.
                 existing = conn.execute(
-                    "SELECT status FROM agents WHERE did = ?", (req.did,)
+                    "SELECT status, projects FROM agents WHERE did = ?", (req.did,)
                 ).fetchone()
                 if existing:
-                    raise HTTPException(
-                        409,
-                        f"Agent already registered with status '{existing[0]}'",
+                    existing_projects = json.loads(existing[1]) if existing[1] else []
+                    merged = sorted(set(existing_projects) | set(req.projects))
+                    if merged == existing_projects:
+                        raise HTTPException(
+                            409,
+                            f"Agent already registered with status '{existing[0]}'",
+                        )
+                    now = datetime.now(UTC).isoformat()
+                    new_status = "pending" if existing[0] == "approved" else existing[0]
+                    conn.execute(
+                        "UPDATE agents SET projects = ?, status = ?, updated_at = ? WHERE did = ?",
+                        (json.dumps(merged), new_status, now, req.did),
                     )
-
-                now = datetime.now(UTC).isoformat()
-                conn.execute(
-                    """INSERT INTO agents (did, identity_card, status, display_name, registered_at, updated_at, metadata, projects)
-                       VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)""",
-                    (req.did, req.identity_card, req.display_name, now, now, json.dumps(req.metadata), json.dumps(req.projects)),
-                )
-                conn.commit()
+                    conn.commit()
+                    conn_status = new_status
+                    conn_message = (
+                        "Project scope updated. Re-approval required."
+                        if new_status == "pending" and existing[0] == "approved"
+                        else "Project scope updated."
+                    )
+                else:
+                    now = datetime.now(UTC).isoformat()
+                    conn.execute(
+                        """INSERT INTO agents (did, identity_card, status, display_name, registered_at, updated_at, metadata, projects)
+                           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)""",
+                        (req.did, req.identity_card, req.display_name, now, now, json.dumps(req.metadata), json.dumps(req.projects)),
+                    )
+                    conn.commit()
+                    conn_status = "pending"
+                    conn_message = "Agent registered. Awaiting admin approval."
+                    merged = req.projects
             finally:
                 conn.close()
 
             self._log.info(
                 "Agent registered: DID=%s display_name='%s' projects=%s",
-                req.did, req.display_name, req.projects,
+                req.did, req.display_name, merged,
             )
 
             return {
                 "did": req.did,
-                "status": "pending",
-                "projects": req.projects,
-                "message": "Agent registered. Awaiting admin approval.",
+                "status": conn_status,
+                "projects": merged,
+                "message": conn_message,
             }
 
         @app.post("/agents/{did}/approve")

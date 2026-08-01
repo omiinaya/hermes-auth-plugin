@@ -103,6 +103,28 @@ class TestProjectRegistry:
         status = admin.get_agent_status(did)
         assert status["projects"] == ["spacetime-tv"]
 
+    def test_register_merges_projects(self, server_env, make_agent):
+        """Re-registering the same DID merges requested projects."""
+        did, client = make_agent(["spacetime-tv"])
+        card = client._storage.get_identity_card()
+        assert card is not None
+        # Register again with an additional project
+        result = client.register_agent(card.id, projects=["spacetime-tv", "spacetime-air"])
+        assert set(result["projects"]) == {"spacetime-tv", "spacetime-air"}
+        admin = AuthClient(server_env["url"], admin_key=_GLOBAL_KEY)
+        assert set(admin.get_agent_status(did)["projects"]) == {"spacetime-tv", "spacetime-air"}
+
+    def test_register_scope_growth_requires_reapproval(self, server_env, make_agent):
+        """Approved agent that gains projects resets to pending."""
+        did, client = make_agent(["spacetime-tv"])
+        admin = AuthClient(server_env["url"], admin_key=_GLOBAL_KEY)
+        admin.approve_agent(did)
+        card = client._storage.get_identity_card()
+        assert card is not None
+        result = client.register_agent(card.id, projects=["spacetime-tv", "spacetime-air"])
+        assert result["status"] == "pending"
+        assert "Re-approval" in result["message"]
+
     def test_list_filter_by_project(self, server_env, make_agent):
         tv_did, _ = make_agent(["spacetime-tv"])
         air_did, _ = make_agent(["spacetime-air"])
