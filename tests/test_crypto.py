@@ -9,6 +9,7 @@ import os
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from hermes_id.crypto import (
     CHALLENGE_SIZE,
@@ -155,6 +156,41 @@ class TestKeyEncryption:
         encrypted[20] ^= 0xFF  # Corrupt the nonce
         with pytest.raises(Exception):
             decrypt_key(bytes(encrypted), "password")
+
+    def test_v2_blob_has_self_describing_header(self, keypair):
+        """v2 blobs carry the KDF id so decryption is environment-portable."""
+        private, _ = keypair
+        der = serialize_private_key(private)
+        blob = encrypt_key(der, "password")
+        assert blob[:4] == b"HID2"
+        kdf_id = blob[4]
+        assert kdf_id in (0, 1, 2)  # argon2id / scrypt / pbkdf2
+        # Decrypt works (uses the recorded KDF)
+        assert decrypt_key(blob, "password") == der
+
+    def test_legacy_v1_blob_decrypts_across_kdfs(self, keypair):
+        """A legacy (headerless) blob decrypts no matter which KDF it used."""
+        from hermes_id.crypto import (
+            _KDF_ARGON2,
+            _KDF_PBKDF2,
+            _KDF_SCRYPT,
+            _derive_storage_key_with_kdf,
+        )
+
+        private, _ = keypair
+        der = serialize_private_key(private)
+        password = "portability-test-password"
+        for kdf, name in ((_KDF_ARGON2, "argon2id"), (_KDF_SCRYPT, "scrypt"), (_KDF_PBKDF2, "pbkdf2")):
+            salt = os.urandom(16)
+            nonce = os.urandom(12)
+            try:
+                key = _derive_storage_key_with_kdf(password, salt, kdf)
+            except ImportError:
+                continue  # argon2 not installed in this test env
+            aesgcm = AESGCM(key)
+            ciphertext = aesgcm.encrypt(nonce, der, None)
+            legacy_blob = salt + nonce + ciphertext  # no header
+            assert decrypt_key(legacy_blob, password) == der, f"legacy {name} blob failed"
 
 
 class TestX25519:

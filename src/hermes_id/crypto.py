@@ -19,7 +19,7 @@ import base64
 import hashlib
 import os
 
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import (
@@ -73,6 +73,9 @@ _SCRYPT_N = 2**20       # CPU/memory cost parameter
 _SCRYPT_R = 8           # blocksize parameter
 _SCRYPT_P = 1           # parallelization parameter
 _SCRYPT_DKLEN = 32      # output key length (AES-256)
+_SCRYPT_MAXMEM = 1_500_000_000  # 1.5 GiB — OpenSSL 3.x defaults to 32 MiB and
+                                # rejects N=2^20,r=8 (~1 GiB + overhead) without
+                                # this; must stay < 2^31-1 (signed int32 cap)
 
 # PBKDF2 fallback (if scrypt unavailable)
 _PBKDF2_ITERATIONS = 600_000
@@ -219,18 +222,46 @@ def derive_session_key(shared_secret: bytes, context: bytes = b"hermes-id/v1") -
 # AES-256-GCM — Key encryption at rest
 # ---------------------------------------------------------------------------
 
-def _derive_storage_key(password: str, salt: bytes) -> bytes:
-    """Derive a 256-bit key from *password* + *salt* using the strongest
-    available KDF.
+# Encrypted-blob header so a blob is SELF-DESCRIBING (which KDF was used).
+# Format v2:  b"HID2" + kdf_id(1 byte) + salt(16) + nonce(12) + ciphertext+tag
+# Legacy v1 (no magic):  salt(16) + nonce(12) + ciphertext+tag
+_BLOB_MAGIC_V2 = b"HID2"
+_KDF_ARGON2 = 0
+_KDF_SCRYPT = 1
+_KDF_PBKDF2 = 2
+_KDF_NAMES = {_KDF_ARGON2: "argon2id", _KDF_SCRYPT: "scrypt", _KDF_PBKDF2: "pbkdf2"}
 
-    Preference order:
-        1. Argon2id  (if argon2-cffi is installed)
-        2. scrypt    (stdlib, Python >= 3.6)
-        3. PBKDF2    (stdlib, Python >= 3.0, fallback)
+
+def _kdf_id() -> int:
+    """Return the KDF id to use for NEW blobs in this environment.
+
+    Preference: Argon2id (if argon2-cffi installed) > scrypt > PBKDF2.
     """
-    # Try Argon2id first
     try:
+        from argon2.low_level import (  # noqa: F401  # pyright: ignore[reportMissingImports]
+            Type,
+            hash_secret_raw,
+        )
+
+        return _KDF_ARGON2
+    except ImportError:
+        pass
+    try:
+        hashlib.scrypt(
+            password=b"probe", salt=b"probe",
+            n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN,
+            maxmem=_SCRYPT_MAXMEM,
+        )
+        return _KDF_SCRYPT
+    except (ValueError, TypeError):
+        return _KDF_PBKDF2
+
+
+def _derive_storage_key_with_kdf(password: str, salt: bytes, kdf: int) -> bytes:
+    """Derive a 256-bit key from *password* + *salt* using the given KDF id."""
+    if kdf == _KDF_ARGON2:
         from argon2.low_level import Type, hash_secret_raw
+
         return hash_secret_raw(
             secret=password.encode("utf-8"),
             salt=salt,
@@ -240,11 +271,7 @@ def _derive_storage_key(password: str, salt: bytes) -> bytes:
             hash_len=32,
             type=Type.ID,       # Argon2id — hybrid resistant to side-channel + GPU
         )
-    except ImportError:
-        pass
-
-    # Fallback: scrypt (stdlib, memory-hard but less configurable)
-    try:
+    if kdf == _KDF_SCRYPT:
         return hashlib.scrypt(
             password=password.encode("utf-8"),
             salt=salt,
@@ -252,12 +279,9 @@ def _derive_storage_key(password: str, salt: bytes) -> bytes:
             r=_SCRYPT_R,
             p=_SCRYPT_P,
             dklen=_SCRYPT_DKLEN,
+            maxmem=_SCRYPT_MAXMEM,
         )
-    except (ValueError, TypeError):
-        # scrypt may fail on old OpenSSL; fall through to PBKDF2
-        pass
-
-    # Ultimate fallback: PBKDF2-SHA256
+    # PBKDF2 fallback
     return hashlib.pbkdf2_hmac(
         _PBKDF2_HASH,
         password.encode("utf-8"),
@@ -267,40 +291,77 @@ def _derive_storage_key(password: str, salt: bytes) -> bytes:
     )
 
 
+def _derive_storage_key(password: str, salt: bytes) -> bytes:
+    """Derive a 256-bit key from *password* + *salt* using the strongest
+    KDF available in this environment (see :func:`_kdf_id`)."""
+    return _derive_storage_key_with_kdf(password, salt, _kdf_id())
+
+
+def _pack_blob_v2(kdf: int, salt: bytes, nonce: bytes, ciphertext: bytes) -> bytes:
+    return _BLOB_MAGIC_V2 + bytes([kdf]) + salt + nonce + ciphertext
+
+
 def encrypt_key(private_key_bytes: bytes, password: str) -> bytes:
     """Encrypt a private key with *password* using AES-256-GCM.
 
-    Output format (binary):
-        [4 bytes: scrypt N as u32][4 bytes: scrypt r as u32]
-        [4 bytes: scrypt p as u32][16 bytes: salt]
-        [12 bytes: AES nonce][ciphertext][16 bytes: GCM tag]
+    Output format v2 (self-describing — records which KDF derived the key):
+        b"HID2" + kdf_id(1) + salt(16) + nonce(12) + ciphertext + GCM tag(16)
 
-    The KDF parameters prefix allows future re-keying.
+    The KDF id header makes blobs portable across environments (a blob
+    created where argon2-cffi was installed decrypts correctly on a host
+    without it, as long as that KDF is available or the legacy fallback
+    chain can validate the GCM tag).
     """
+    kdf = _kdf_id()
     salt = os.urandom(16)
     nonce = os.urandom(_AES_NONCE_SIZE)
 
-    key = _derive_storage_key(password, salt)
+    key = _derive_storage_key_with_kdf(password, salt, kdf)
     aesgcm = AESGCM(key)
     ciphertext = aesgcm.encrypt(nonce, private_key_bytes, None)  # no AAD
 
-    # Pack: salt(16) + nonce(12) + ciphertext(contains appended tag)
-    return salt + nonce + ciphertext
+    return _pack_blob_v2(kdf, salt, nonce, ciphertext)
 
 
 def decrypt_key(blob: bytes, password: str) -> bytes:
     """Decrypt a private key previously encrypted with :func:`encrypt_key`.
 
+    Supports both the v2 self-describing format and legacy v1 blobs (no
+    header). For legacy blobs, each available KDF is tried in preference
+    order; the AES-GCM tag authenticates the result, so only the KDF that
+    originally encrypted the key can succeed.
+
     Raises ``cryptography.exceptions.InvalidTag`` if the password is wrong
     or the blob is corrupted.
     """
+    if blob.startswith(_BLOB_MAGIC_V2):
+        kdf = blob[4]
+        payload = blob[5:]
+        salt = payload[0:16]
+        nonce = payload[16:28]
+        ciphertext = payload[28:]
+        key = _derive_storage_key_with_kdf(password, salt, kdf)
+        aesgcm = AESGCM(key)
+        return aesgcm.decrypt(nonce, ciphertext, None)
+
+    # Legacy v1 blob — try each KDF in preference order; GCM tag validates.
     salt = blob[0:16]
     nonce = blob[16:28]
-    ciphertext = blob[28:]  # includes GCM tag at end
-
-    key = _derive_storage_key(password, salt)
-    aesgcm = AESGCM(key)
-    return aesgcm.decrypt(nonce, ciphertext, None)
+    ciphertext = blob[28:]
+    last_error: Exception | None = None
+    for kdf in (_KDF_ARGON2, _KDF_SCRYPT, _KDF_PBKDF2):
+        try:
+            key = _derive_storage_key_with_kdf(password, salt, kdf)
+            aesgcm = AESGCM(key)
+            return aesgcm.decrypt(nonce, ciphertext, None)
+        except ImportError:
+            continue  # KDF unavailable in this environment — try next
+        except Exception as e:  # InvalidTag or scrypt OSError etc.
+            last_error = e
+            continue
+    if last_error is not None:
+        raise last_error
+    raise InvalidTag
 
 
 # ---------------------------------------------------------------------------
