@@ -27,9 +27,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+        run: |
+          # Debian 12 self-hosted runner: actions/setup-python has NO prebuilt
+          # versions (see ci.yml). Use the system Python 3.11 + job-local venv.
+          PY=$(command -v python3.11 || command -v python3)
+          $PY -m venv "$RUNNER_TEMP/pypi-venv"
+          echo "$RUNNER_TEMP/pypi-venv/bin" >> "$GITHUB_PATH"
+          python --version
 
       - name: Install build tooling
         run: |
