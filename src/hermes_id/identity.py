@@ -255,7 +255,10 @@ def verify_identity_card(card: IdentityCard) -> bool:
     if not signature_b64:
         return False
 
-    signature_bytes = _unb64(signature_b64)
+    try:
+        signature_bytes = _unb64(signature_b64)
+    except Exception:
+        return False  # malformed base64 signature = invalid card
 
     # Rebuild the pre-proof JSON
     card_no_proof = IdentityCard(
@@ -276,7 +279,10 @@ def verify_identity_card(card: IdentityCard) -> bool:
         return False
 
     # Decode multibase: first char is prefix ('u' for base64url, 'z' for base58btc)
-    pub_raw = _unb64(pub_b58[1:])  # strip prefix 'u'
+    try:
+        pub_raw = _unb64(pub_b58[1:])  # strip prefix 'u'
+    except Exception:
+        return False  # malformed public key = invalid card
 
     try:
         public_key = ed25519.Ed25519PublicKey.from_public_bytes(pub_raw)

@@ -247,6 +247,7 @@ class AuthClient:
         did: str,
         identity_card: str | None = None,
         display_name: str = "",
+        projects: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Register this agent with the auth server.
@@ -255,11 +256,13 @@ class AuthClient:
             did: The agent's DID.
             identity_card: JSON of the identity card. If None, loads from local storage.
             display_name: Human-readable name for the agent.
+            projects: Requested project audiences this agent wants access to.
+                Approvers filter by these; scoped admin keys enforce them.
             metadata: Optional metadata dict.
 
         Returns::
 
-            {"did": "did:hermes:...", "status": "pending", "message": "..."}
+            {"did": "did:hermes:...", "status": "pending", "projects": [...], "message": "..."}
         """
         if identity_card is None:
             identity_card = self.get_identity_card_json()
@@ -270,6 +273,7 @@ class AuthClient:
                 "did": did,
                 "identity_card": identity_card,
                 "display_name": display_name,
+                "projects": projects or [],
                 "metadata": metadata or {},
             },
         )
@@ -291,6 +295,7 @@ class AuthClient:
         page: int = 1,
         page_size: int = 50,
         search: str | None = None,
+        project: str | None = None,
     ) -> dict[str, Any]:
         """List all agents in the registry. Requires admin key.
 
@@ -299,6 +304,7 @@ class AuthClient:
             page: Page number (1-indexed).
             page_size: Items per page (max 200).
             search: Search DIDs and display names.
+            project: Filter by requested project (audience).
 
         Returns::
 
@@ -309,6 +315,8 @@ class AuthClient:
             params["status"] = status
         if search:
             params["search"] = search
+        if project:
+            params["project"] = project
 
         resp = self._client.get(
             f"{self._server_url}/agents",
@@ -318,19 +326,35 @@ class AuthClient:
         resp.raise_for_status()
         return resp.json()
 
-    def approve_agent(self, did: str) -> dict[str, Any]:
-        """Approve a pending agent. Requires admin key."""
+    def approve_agent(self, did: str, project: str | None = None) -> dict[str, Any]:
+        """Approve a pending agent. Requires admin key.
+
+        Args:
+            did: Agent DID to approve.
+            project: If set, require the agent to have requested this project
+                (server enforces). Useful with ``--for <project>`` in the CLI.
+        """
+        params = {"project": project} if project else None
         resp = self._client.post(
             f"{self._server_url}/agents/{did}/approve",
+            params=params,
             headers=self._admin_headers(),
         )
         resp.raise_for_status()
         return resp.json()
 
-    def deny_agent(self, did: str) -> dict[str, Any]:
-        """Deny a pending agent. Requires admin key."""
+    def deny_agent(self, did: str, project: str | None = None) -> dict[str, Any]:
+        """Deny a pending agent. Requires admin key.
+
+        Args:
+            did: Agent DID to deny.
+            project: If set, require the agent to have requested this project
+                (server enforces).
+        """
+        params = {"project": project} if project else None
         resp = self._client.post(
             f"{self._server_url}/agents/{did}/deny",
+            params=params,
             headers=self._admin_headers(),
         )
         resp.raise_for_status()

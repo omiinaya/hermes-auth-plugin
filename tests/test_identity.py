@@ -83,10 +83,24 @@ class TestVerifyIdentityCard:
 
     def test_verify_tampered_signature(self, identity_card):
         sig = identity_card.proof["signatureValue"]
-        # Change one character in the base64 signature
+        # Deterministically swap the middle char for a DIFFERENT valid
+        # base64url char (XORing a random byte can produce an invalid char
+        # that raises a decode error instead of returning False).
         mutated = bytearray(sig.encode())
-        mutated[len(mutated) // 2] ^= 1
+        mid = len(mutated) // 2
+        orig = chr(mutated[mid])
+        mutated[mid] = ord("A" if orig != "A" else "B")
         identity_card.proof["signatureValue"] = mutated.decode()
+        assert verify_identity_card(identity_card) is False
+
+    def test_verify_malformed_signature_base64(self, identity_card):
+        """A card with garbage (non-base64) signature bytes is invalid, not an error."""
+        identity_card.proof["signatureValue"] = "!!!not-base64!!!"
+        assert verify_identity_card(identity_card) is False
+
+    def test_verify_malformed_public_key_base64(self, identity_card):
+        """A card with garbage public key bytes is invalid, not an error."""
+        identity_card.verification_method[0]["publicKeyMultibase"] = "u!!!not-base64!!!"
         assert verify_identity_card(identity_card) is False
 
     def test_verify_tampered_created_time(self, identity_card):

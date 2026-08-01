@@ -34,12 +34,17 @@ def build_parser() -> argparse.ArgumentParser:
     list_p.add_argument("--page", type=int, default=1, help="Page number")
     list_p.add_argument("--page-size", type=int, default=50, help="Items per page")
     list_p.add_argument("--search", help="Search DID or display name")
+    list_p.add_argument("--project", help="Filter by requested project (audience)")
 
     approve_p = sub.add_parser("approve", help="Approve a pending agent")
     approve_p.add_argument("did", help="Agent DID to approve")
+    approve_p.add_argument("--for", dest="project", metavar="PROJECT",
+                           help="Require the agent to have requested this project")
 
     deny_p = sub.add_parser("deny", help="Deny a pending agent")
     deny_p.add_argument("did", help="Agent DID to deny")
+    deny_p.add_argument("--for", dest="project", metavar="PROJECT",
+                        help="Require the agent to have requested this project")
 
     status_p = sub.add_parser("status", help="Check an agent's status")
     status_p.add_argument("did", help="Agent DID to check")
@@ -70,15 +75,16 @@ def main(argv: list[str] | None = None) -> int:
                 page=args.page,
                 page_size=args.page_size,
                 search=args.search,
+                project=args.project,
             )
             print(json.dumps(result, indent=2))
 
         elif args.command == "approve":
-            result = client.approve_agent(args.did)
+            result = client.approve_agent(args.did, project=args.project)
             print(json.dumps(result, indent=2))
 
         elif args.command == "deny":
-            result = client.deny_agent(args.did)
+            result = client.deny_agent(args.did, project=args.project)
             print(json.dumps(result, indent=2))
 
         elif args.command == "status":

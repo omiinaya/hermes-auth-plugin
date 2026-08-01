@@ -124,6 +124,18 @@ def main(argv: list[str] | None = None) -> int:
     server_p.add_argument("--tls-cert", help="Path to TLS certificate (PEM) — enables HTTPS")
     server_p.add_argument("--tls-key", help="Path to TLS private key (PEM) for the certificate")
 
+    # register (bootstrap Path A — pre-provision our agents for a project)
+    reg_p = sub.add_parser(
+        "register", parents=[parent],
+        help="Register this agent with an auth server, requesting project access (bootstrap)",
+    )
+    reg_p.add_argument("--server", default=os.environ.get("HERMES_AUTH_SERVER_URL", ""),
+                       help="Auth server URL (default: HERMES_AUTH_SERVER_URL env)")
+    reg_p.add_argument("--for", dest="projects", action="append", metavar="PROJECT",
+                       help="Request access for a project (audience). Repeatable.")
+    reg_p.add_argument("--display-name", help="Human-readable name for this agent")
+    reg_p.add_argument("--password", help="Passphrase for the private key (default: HERMES_ID_PASSPHRASE env)")
+
     # mcp
     sub.add_parser(
         "mcp", parents=[parent],
@@ -167,6 +179,8 @@ def _dispatch(args: argparse.Namespace) -> int:
             return _cmd_handshake(args)
         elif args.command == "server":
             return _cmd_server(args)
+        elif args.command == "register":
+            return _cmd_register(args)
         elif args.command == "mcp":
             return _cmd_mcp(args)
         else:
@@ -528,6 +542,63 @@ def _cmd_server(args: argparse.Namespace) -> int:
         ssl_certfile=args.tls_cert,
         ssl_keyfile=args.tls_key,
     )
+    return 0
+
+
+def _cmd_register(args: argparse.Namespace) -> int:
+    """Register this agent with an auth server, requesting project access.
+
+    Bootstrap Path A: run once per (agent, project) pair at scaffold time.
+    The agent appears in the registry as ``pending`` with the requested
+    projects; an admin (or a scoped admin key) approves it, after which the
+    agent can ``AuthFlow.login(aud=project)`` and get scoped tokens.
+    """
+    try:
+        from hermes_id.auth_client import AuthClient
+    except ImportError as e:
+        print(f"❌ Cannot register: {e}", file=sys.stderr)
+        return 1
+
+    if not args.server:
+        print(
+            "❌ No auth server URL. Pass --server or set HERMES_AUTH_SERVER_URL.",
+            file=sys.stderr,
+        )
+        return 1
+
+    projects = args.projects or []
+    if not projects:
+        print(
+            "⚠️  No --for <project> given — agent will be registered without "
+            "any project scoping (approvers won't see it in project filters).",
+            file=sys.stderr,
+        )
+
+    storage = _get_storage(args)
+    if not storage.exists():
+        print("❌ No identity configured. Run `hermes-id init` first.", file=sys.stderr)
+        return 1
+
+    client = AuthClient(args.server, identity_dir=args.dir)
+    try:
+        card = storage.get_identity_card()
+        display_name = args.display_name or f"hermes-agent-{card.did_short.split(':')[-1][:8]}"
+        result = client.register_agent(
+            card.id,
+            display_name=display_name,
+            projects=projects,
+        )
+    finally:
+        client.close()
+
+    status = result.get("status", "?")
+    print(f"✅ Registered {card.id}")
+    print(f"   Status:   {status}")
+    if projects:
+        print(f"   Projects: {', '.join(projects)}")
+    if status == "pending":
+        print("   Awaiting admin approval. Approve with:")
+        print(f"   hermes-id-admin --server {args.server} approve {card.id} --for <project>")
     return 0
 
 

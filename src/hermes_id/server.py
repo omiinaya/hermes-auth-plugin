@@ -143,6 +143,7 @@ class RegisterRequest(BaseModel):
     did: str
     identity_card: str
     display_name: str = ""
+    projects: list[str] = []  # requested project audiences (approval scoping)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 class AgentStatus(BaseModel):
@@ -210,6 +211,7 @@ class AuthServer:
         cors_origins: list[str] | None = None,
         rate_limit_max: int = 30,
         rate_limit_window: float = 60.0,
+        scoped_admin_keys: dict[str, list[str]] | None = None,
     ):
         self._storage = IdentityStorage(directory=identity_dir)
         self._token_ttl = token_ttl
@@ -228,6 +230,24 @@ class AuthServer:
                 "No admin key set via HERMES_ID_ADMIN_KEY or constructor. "
                 "Generated random key: %s", self._admin_key[:16] + "..."
             )
+
+        # Per-app scoped admin keys: {key: [project, ...]} — a scoped key can
+        # only approve/deny/list agents that requested one of its projects.
+        # Env form (JSON): HERMES_ID_SCOPED_ADMIN_KEYS='{"key1":["spacetime-tv"]}'
+        self._scoped_admin_keys: dict[str, set[str]] = {}
+        if scoped_admin_keys:
+            self._scoped_admin_keys = {k: set(v) for k, v in scoped_admin_keys.items()}
+        else:
+            raw = os.environ.get("HERMES_ID_SCOPED_ADMIN_KEYS", "")
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    self._scoped_admin_keys = {k: set(v) for k, v in parsed.items()}
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    _logger.error(
+                        "HERMES_ID_SCOPED_ADMIN_KEYS is not valid JSON "
+                        "({key: [project,...]}); scoped keys disabled"
+                    )
 
         # SQLite databases
         self._db_path = Path(db_path or _AGENT_REGISTRY_DB)
@@ -301,11 +321,52 @@ class AuthServer:
     # Admin auth dependency
     # ------------------------------------------------------------------
 
-    def _require_admin(self, x_admin_key: str = Header("")) -> None:
-        if not x_admin_key or x_admin_key != self._admin_key:
-            raise HTTPException(
-                403, "Invalid or missing admin key. Provide X-Admin-Key header."
-            )
+    def _authorize_admin(self, x_admin_key: str) -> set[str] | None:
+        """Validate an admin key; return its project scope.
+
+        Returns:
+            ``None`` for the global key (unrestricted), or a set of project
+            names a scoped key is allowed to administer.
+
+        Raises:
+            HTTPException(403): invalid or missing key.
+        """
+        if x_admin_key and x_admin_key == self._admin_key:
+            return None  # global key — unrestricted
+        if x_admin_key in self._scoped_admin_keys:
+            return self._scoped_admin_keys[x_admin_key]
+        raise HTTPException(
+            403, "Invalid or missing admin key. Provide X-Admin-Key header."
+        )
+
+    def _agent_projects(self, conn: sqlite3.Connection, did: str) -> list[str]:
+        """Return the list of projects an agent requested."""
+        row = conn.execute(
+            "SELECT projects FROM agents WHERE did = ?", (did,)
+        ).fetchone()
+        if not row or not row[0]:
+            return []
+        try:
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def _projects_clause(
+        self, scope: set[str] | None, requested: list[str] | None
+    ) -> tuple[str, list[Any]]:
+        """Build a SQL WHERE fragment filtering agents by requested projects.
+
+        ``scope`` — the caller's admin scope (None = global).
+        ``requested`` — an explicit ``?project=`` filter from the caller.
+        Both are ANDed; agents match if their projects list intersects.
+        """
+        conds: list[str] = []
+        params: list[Any] = []
+        for project in sorted(set((scope or set()) | (set(requested) if requested else set()))):
+            conds.append("EXISTS (SELECT 1 FROM json_each(agents.projects) WHERE json_each.value = ?)")
+            params.append(project)
+        fragment = (" AND " + " AND ".join(conds)) if conds else ""
+        return fragment, params
 
     # ------------------------------------------------------------------
     # Databases
@@ -327,6 +388,12 @@ class AuthServer:
                 metadata TEXT DEFAULT '{}'
             )
         """)
+        # v1.3.0 migration: per-agent requested projects (JSON list).
+        # CREATE TABLE IF NOT EXISTS won't add columns to existing DBs.
+        import contextlib
+
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE agents ADD COLUMN projects TEXT DEFAULT '[]'")
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)
         """)
@@ -485,7 +552,7 @@ class AuthServer:
     def _register_routes(self) -> None:
         app = self.app
         rate_limit = self._check_rate_limit
-        require_admin = self._require_admin
+        authorize_admin = self._authorize_admin
 
         # ------------------------------------------------------------------
         # Identity
@@ -721,10 +788,16 @@ class AuthServer:
             page: int = Query(1, ge=1, description="Page number (1-indexed)"),
             page_size: int = Query(_PAGE_SIZE, ge=1, le=200, alias="page_size"),
             search: str | None = Query(None, min_length=1, max_length=100),
+            project: str | None = Query(None, min_length=1, max_length=100, description="Filter by requested project (audience)"),
             x_admin_key: str = Header(""),
         ):
-            """List all registered agents. Requires admin key."""
-            require_admin(x_admin_key)
+            """List registered agents. Requires admin key (global or scoped).
+
+            A scoped admin key can only see agents that requested one of its
+            projects. A global key sees everything, optionally filtered by
+            ``?project=``.
+            """
+            scope = authorize_admin(x_admin_key)
 
             conn = self._db_connect()
             try:
@@ -739,6 +812,13 @@ class AuthServer:
                     conditions.append("(did LIKE ? OR display_name LIKE ?)")
                     params.extend([f"%{search}%", f"%{search}%"])
 
+                projects_fragment, projects_params = self._projects_clause(
+                    scope, [project] if project else None
+                )
+                if projects_fragment:
+                    conditions.append(projects_fragment.removeprefix(" AND "))
+                    params.extend(projects_params)
+
                 where_clause = ""
                 if conditions:
                     where_clause = "WHERE " + " AND ".join(conditions)
@@ -752,7 +832,7 @@ class AuthServer:
                 # Fetch page
                 offset = (page - 1) * page_size
                 rows = conn.execute(
-                    f"SELECT did, status, display_name, registered_at, updated_at, approved_at, metadata FROM agents {where_clause} ORDER BY registered_at DESC LIMIT ? OFFSET ?",
+                    f"SELECT did, status, display_name, registered_at, updated_at, approved_at, metadata, projects FROM agents {where_clause} ORDER BY registered_at DESC LIMIT ? OFFSET ?",
                     params + [page_size, offset],
                 ).fetchall()
 
@@ -766,6 +846,7 @@ class AuthServer:
                         "updated_at": row[4],
                         "approved_at": row[5],
                         "metadata": json.loads(row[6]) if row[6] else {},
+                        "projects": json.loads(row[7]) if row[7] else [],
                     })
             finally:
                 conn.close()
@@ -811,26 +892,39 @@ class AuthServer:
 
                 now = datetime.now(UTC).isoformat()
                 conn.execute(
-                    """INSERT INTO agents (did, identity_card, status, display_name, registered_at, updated_at, metadata)
-                       VALUES (?, ?, 'pending', ?, ?, ?, ?)""",
-                    (req.did, req.identity_card, req.display_name, now, now, json.dumps(req.metadata)),
+                    """INSERT INTO agents (did, identity_card, status, display_name, registered_at, updated_at, metadata, projects)
+                       VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)""",
+                    (req.did, req.identity_card, req.display_name, now, now, json.dumps(req.metadata), json.dumps(req.projects)),
                 )
                 conn.commit()
             finally:
                 conn.close()
 
-            self._log.info("Agent registered: DID=%s display_name='%s'", req.did, req.display_name)
+            self._log.info(
+                "Agent registered: DID=%s display_name='%s' projects=%s",
+                req.did, req.display_name, req.projects,
+            )
 
             return {
                 "did": req.did,
                 "status": "pending",
+                "projects": req.projects,
                 "message": "Agent registered. Awaiting admin approval.",
             }
 
         @app.post("/agents/{did}/approve")
-        def approve_agent(did: str, x_admin_key: str = Header("")):
-            """Approve a pending agent. Requires admin key."""
-            require_admin(x_admin_key)
+        def approve_agent(
+            did: str,
+            project: str | None = Query(None, min_length=1, max_length=100, description="Require the agent to have requested this project"),
+            x_admin_key: str = Header(""),
+        ):
+            """Approve a pending agent. Requires admin key (global or scoped).
+
+            With a scoped admin key, only agents that requested one of the
+            key's projects can be approved. With ``?project=X``, the agent
+            must have requested X regardless of key.
+            """
+            scope = authorize_admin(x_admin_key)
 
             conn = self._db_connect()
             try:
@@ -844,6 +938,18 @@ class AuthServer:
                     raise HTTPException(
                         409,
                         f"Agent is already '{existing[0]}' (can only approve 'pending' agents)",
+                    )
+
+                agent_projects = self._agent_projects(conn, did)
+                if scope and not (set(agent_projects) & scope):
+                    raise HTTPException(
+                        403,
+                        f"Scoped admin key cannot administer agents for projects {sorted(agent_projects)}",
+                    )
+                if project and project not in agent_projects:
+                    raise HTTPException(
+                        403,
+                        f"Agent did not request project '{project}' (requested {sorted(agent_projects)})",
                     )
 
                 now = datetime.now(UTC).isoformat()
@@ -860,9 +966,13 @@ class AuthServer:
             return {"did": did, "status": "approved"}
 
         @app.post("/agents/{did}/deny")
-        def deny_agent(did: str, x_admin_key: str = Header("")):
-            """Deny a pending agent. Requires admin key."""
-            require_admin(x_admin_key)
+        def deny_agent(
+            did: str,
+            project: str | None = Query(None, min_length=1, max_length=100, description="Require the agent to have requested this project"),
+            x_admin_key: str = Header(""),
+        ):
+            """Deny a pending agent. Requires admin key (global or scoped)."""
+            scope = authorize_admin(x_admin_key)
 
             conn = self._db_connect()
             try:
@@ -876,6 +986,18 @@ class AuthServer:
                     raise HTTPException(
                         409,
                         f"Agent is already '{existing[0]}' (can only deny 'pending' agents)",
+                    )
+
+                agent_projects = self._agent_projects(conn, did)
+                if scope and not (set(agent_projects) & scope):
+                    raise HTTPException(
+                        403,
+                        f"Scoped admin key cannot administer agents for projects {sorted(agent_projects)}",
+                    )
+                if project and project not in agent_projects:
+                    raise HTTPException(
+                        403,
+                        f"Agent did not request project '{project}' (requested {sorted(agent_projects)})",
                     )
 
                 now = datetime.now(UTC).isoformat()
@@ -894,15 +1016,15 @@ class AuthServer:
         @app.get("/agents/{did}/status")
         def get_agent_status(did: str, x_admin_key: str = Header("")):
             """Check an agent's registration and approval status. Requires admin key."""
-            require_admin(x_admin_key)
-            return _agent_status_internal(did)
+            scope = authorize_admin(x_admin_key)
+            return _agent_status_internal(did, scope)
 
-        def _agent_status_internal(did: str) -> dict:
+        def _agent_status_internal(did: str, scope: set[str] | None = None) -> dict:
             """Internal helper for agent status lookup."""
             conn = self._db_connect()
             try:
                 row = conn.execute(
-                    "SELECT did, status, display_name, registered_at, updated_at, approved_at, metadata FROM agents WHERE did = ?",
+                    "SELECT did, status, display_name, registered_at, updated_at, approved_at, metadata, projects FROM agents WHERE did = ?",
                     (did,),
                 ).fetchone()
             finally:
@@ -910,6 +1032,10 @@ class AuthServer:
 
             if not row:
                 raise HTTPException(404, "Agent not found")
+
+            agent_projects = json.loads(row[7]) if row[7] else []
+            if scope and not (set(agent_projects) & scope):
+                raise HTTPException(403, "Scoped admin key cannot view this agent")
 
             return {
                 "did": row[0],
@@ -919,12 +1045,13 @@ class AuthServer:
                 "updated_at": row[4],
                 "approved_at": row[5],
                 "metadata": json.loads(row[6]) if row[6] else {},
+                "projects": agent_projects,
             }
 
         @app.delete("/agents/{did}")
         def delete_agent(did: str, x_admin_key: str = Header("")):
-            """Remove an agent from the registry. Requires admin key."""
-            require_admin(x_admin_key)
+            """Remove an agent from the registry. Requires admin key (global or scoped)."""
+            scope = authorize_admin(x_admin_key)
 
             conn = self._db_connect()
             try:
@@ -933,6 +1060,13 @@ class AuthServer:
                 ).fetchone()
                 if not existing:
                     raise HTTPException(404, "Agent not found")
+
+                agent_projects = self._agent_projects(conn, did)
+                if scope and not (set(agent_projects) & scope):
+                    raise HTTPException(
+                        403,
+                        f"Scoped admin key cannot administer agents for projects {sorted(agent_projects)}",
+                    )
 
                 conn.execute("DELETE FROM agents WHERE did = ?", (did,))
                 conn.commit()

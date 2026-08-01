@@ -164,6 +164,15 @@ class HermesIDMCPServer:
                                 "type": "string",
                                 "description": "Display name for registration",
                             },
+                            "aud": {
+                                "type": "string",
+                                "description": "Audience (project name) to scope the token to (for login)",
+                            },
+                            "projects": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Requested project audiences (for register)",
+                            },
                         },
                         "required": ["server_url", "action"],
                     },
@@ -331,12 +340,16 @@ class HermesIDMCPServer:
             if action == "login":
                 from hermes_id.auth_client import AuthFlow
                 flow = AuthFlow(server_url, identity_dir=str(self._storage._dir))
-                token = flow.login()
-                return json.dumps({"token": token, "did": self._get_card().id})
+                aud = args.get("aud", "")
+                token = flow.login(aud=aud or None)
+                return json.dumps({"token": token, "did": self._get_card().id, "aud": aud})
             elif action == "register":
                 card = self._get_card()
                 display_name = args.get("display_name", "") or card.id
-                result = client.register_agent(card.id, display_name=display_name)
+                projects = args.get("projects", []) or []
+                result = client.register_agent(
+                    card.id, display_name=display_name, projects=projects
+                )
                 return json.dumps(result)
             elif action == "status":
                 card = self._get_card()
