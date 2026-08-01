@@ -76,6 +76,13 @@ from hermes_id.identity import (
 )
 from hermes_id.storage import IdentityStorage
 
+try:  # installed distribution (wheel/sdist)
+    from importlib.metadata import version as _pkg_version
+
+    SERVER_VERSION = _pkg_version("hermes-id")
+except Exception:  # pragma: no cover — source-tree dev runs
+    from hermes_id import __version__ as SERVER_VERSION
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -265,7 +272,7 @@ class AuthServer:
         # Build FastAPI app
         self.app = FastAPI(
             title="hermes-id Auth Server",
-            version="1.1.0",
+            version=SERVER_VERSION,
             description=(
                 "Self-Sovereign Identity for agents — challenge-response auth, "
                 "token issuance, agent registry with approval workflow.\n\n"
@@ -573,7 +580,7 @@ class AuthServer:
             return {
                 "status": "ok",
                 "did": card.id if card else "unconfigured",
-                "version": "1.1.0",
+                "version": SERVER_VERSION,
                 "uptime": time.time(),
             }
 
