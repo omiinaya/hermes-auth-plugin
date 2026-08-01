@@ -22,8 +22,9 @@ import httpx
 
 from hermes_id.auth_client import AuthFlow
 
-AUTH_SERVER = os.environ.get("HERMES_ID_SERVER_URL", "http://127.0.0.1:9488")
+AUTH_SERVER = os.environ.get("HERMES_AUTH_SERVER_URL", "http://127.0.0.1:9488")
 EXAMPLE_SERVICE = os.environ.get("EXAMPLE_SERVICE_URL", "http://127.0.0.1:8000")
+AUTH_PROJECT = os.environ.get("HERMES_AUTH_PROJECT", "demo-service")
 
 
 def main():
@@ -31,13 +32,18 @@ def main():
     parser.add_argument("--token-only", action="store_true", help="Only get the token")
     parser.add_argument("--auth-server", default=AUTH_SERVER)
     parser.add_argument("--service-url", default=EXAMPLE_SERVICE)
+    parser.add_argument(
+        "--project",
+        default=AUTH_PROJECT,
+        help="Audience to scope the token to (must match the service's HERMES_AUTH_PROJECT)",
+    )
     args = parser.parse_args()
 
     # Step 1: Authenticate with the hermes-id Auth Server
     print(f"🔐 Authenticating with {args.auth_server}...")
     flow = AuthFlow(args.auth_server)
     try:
-        token, result = flow.login()
+        token, result = flow.login(aud=args.project)
     except Exception as e:
         print(f"❌ Authentication failed: {e}")
         print("   Make sure the auth server is running and this agent is")
@@ -47,6 +53,7 @@ def main():
         flow.close()
 
     print(f"✅ Authenticated as {result['did'][:24]}...")
+    print(f"   Audience: {result.get('aud', '(none)')}")
     print(f"   Token expires at: {result['expires_at']}")
 
     if args.token_only:

@@ -236,26 +236,39 @@ from the *old* identity.
 ```python
 from hermes_id.auth_client import AuthFlow, AuthClient
 
-# 1. Authenticate and get a token
+# 1. Authenticate and get a token, scoped to the target project
 flow = AuthFlow("http://auth-server:9488", identity_dir="~/.hermes/identity")
-token = flow.login()
+token = flow.login(aud="spacetime-tv")  # aud = audience (project name)
 
-# Present token to any spacetime-x service
+# Present token to any spacetime-x service that enforces aud=spacetime-tv
 response = my_service.call_api(token=token)
 ```
 
-### Auth Flow — Service Perspective
+### Auth Flow — Service Perspective (offline-first, v1.3.0+)
 
 ```python
-from hermes_id.auth_client import AuthClient
+from hermes_id.fastapi_middleware import HermesIDAuth
 
-server_card = client.get_identity()  # get the server's identity card
-client = AuthClient("http://auth-server:9488")
+# Env contract: HERMES_AUTH_SERVER_URL + HERMES_AUTH_PROJECT
+auth = HermesIDAuth()
 
-# Verify a token presented by an agent
-payload = client.verify_token(token)
-if payload:
-    print(f"Agent {payload['did']} authenticated ✓")
+@app.get("/api/data")
+async def data(agent: dict = Depends(auth.verify)):
+    return {"did": agent["did"]}
+```
+
+The SDK verifies tokens **locally** (Ed25519 signature + expiry + audience)
+against a disk-cached copy of the server's identity card — no per-request
+round-trip, works when the auth server is down. Audience enforcement is
+mandatory: a token minted for another project is rejected with 401.
+
+For non-FastAPI code (CLI tools, cron, scripts):
+
+```python
+from hermes_id.sdk import load_server_card, verify_token_offline
+
+card = load_server_card("http://auth-server:9488")
+payload = verify_token_offline(token, card, project="spacetime-tv")
 ```
 
 ### Agent Registration & Approval Workflow
@@ -355,7 +368,9 @@ Auth tokens are Ed25519-signed JSON payloads in the format:
 base64url(payload) || "." || base64url(signature)
 ```
 
-The payload contains `{did, issuer, issued_at, expires_at, purpose}`.  
-Services can verify tokens by calling `POST /verify` or using
-`hermes_id.server.verify_auth_token(token)` directly.
+The payload contains `{did, issuer, issued_at, expires_at, purpose, aud}`
+where `aud` is the audience (project name) the token is scoped to. Services
+enforce `aud` locally against their own `HERMES_AUTH_PROJECT` via
+`hermes_id.sdk.verify_token_offline()` — or, in FastAPI, via
+`HermesIDAuth`.
 

@@ -158,6 +158,7 @@ class AuthClient:
         challenge_b64: str,
         signature_b64: str,
         identity_card: str | None = None,
+        aud: str | None = None,
     ) -> dict[str, Any]:
         """Authenticate with the auth server.
 
@@ -168,10 +169,13 @@ class AuthClient:
             challenge_b64: The challenge from the server.
             signature_b64: The Ed25519 signature of the challenge bytes.
             identity_card: JSON of the identity card. If None, loads from local storage.
+            aud: Audience (project name) to scope the token to. Verifying
+                services reject tokens whose ``aud`` does not match their own
+                project name. Defaults to "" (unscoped).
 
         Returns::
 
-            {"token": "...", "token_id": "...", "expires_at": 1234567890.0, "did": "..."}
+            {"token": "...", "token_id": "...", "expires_at": 1234567890.0, "did": "...", "aud": "..."}
         """
         if identity_card is None:
             identity_card = self.get_identity_card_json()
@@ -183,6 +187,7 @@ class AuthClient:
                 "challenge_b64": challenge_b64,
                 "signature_b64": signature_b64,
                 "identity_card": identity_card,
+                "aud": aud or "",
             },
         )
         resp.raise_for_status()
@@ -356,8 +361,13 @@ class AuthFlow:
         self._client = AuthClient(server_url, identity_dir=identity_dir)
         self._storage = IdentityStorage(directory=identity_dir) if identity_dir else None
 
-    def login(self) -> tuple[str, dict[str, Any]]:
+    def login(self, aud: str | None = None) -> tuple[str, dict[str, Any]]:
         """Full auth flow: challenge → sign → authenticate → return token.
+
+        Args:
+            aud: Audience (project name) to scope the token to. When set, the
+                returned token only verifies on services whose project name
+                matches. Recommended for every integration.
 
         Returns:
             Tuple of (token_string, full_response_dict).
@@ -367,7 +377,7 @@ class AuthFlow:
 
         challenge = self._client.challenge(did)
         sig = self._client.sign_challenge(challenge["challenge_b64"])
-        result = self._client.authenticate(did, challenge["challenge_b64"], sig)
+        result = self._client.authenticate(did, challenge["challenge_b64"], sig, aud=aud)
         return result["token"], result
 
     def close(self) -> None:

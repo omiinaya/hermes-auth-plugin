@@ -18,7 +18,7 @@ The protocol provides replay-proof, forward-compatible authentication
 without any central registry or PKI.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 from hermes_id.crypto import (
     decrypt_key,
@@ -41,6 +41,16 @@ from hermes_id.identity import (
     format_identity_card,
     verify_identity_card,
 )
+from hermes_id.sdk import (
+    ENV_PROJECT,
+    ENV_SERVER_URL,
+    AuthError,
+    RevocationChecker,
+    TokenCache,
+    default_card_cache_path,
+    load_server_card,
+    verify_token_offline,
+)
 from hermes_id.storage import (
     IdentityStorage,
     StorageConfig,
@@ -62,6 +72,15 @@ __all__ = [
     "create_identity",
     "verify_identity_card",
     "format_identity_card",
+    # App-side SDK
+    "AuthError",
+    "ENV_SERVER_URL",
+    "ENV_PROJECT",
+    "TokenCache",
+    "RevocationChecker",
+    "default_card_cache_path",
+    "load_server_card",
+    "verify_token_offline",
     # Storage
     "IdentityStorage",
     "StorageConfig",

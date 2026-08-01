@@ -1,5 +1,62 @@
 # Changelog
 
+## 1.3.0 — 2026-07-31
+
+### Added — App-Side SDK (`hermes_id.sdk`)
+
+The consumable foundation for integrating every spacetime-x project with the
+hermes-id Auth Server. Closes the verified v1.2 gaps (audit 2026-07-30):
+
+- **Offline-first verification** — `load_server_card()` fetches the auth
+  server's identity card once, verifies its self-signature, and caches it to
+  disk (`~/.hermes/auth/server-card-<hash>.json`). `verify_token_offline()`
+  then verifies tokens **locally** (Ed25519 signature + expiry) with zero
+  per-request round-trips. Fresh cache short-circuits the network; stale
+  cache falls back when the server is unreachable.
+- **Audience enforcement (the P2 fix)** — tokens now carry `aud` (project
+  name). `verify_token_offline(..., project=...)` and `HermesIDAuth` reject
+  tokens whose audience doesn't match. A token minted for `spacetime-tv` is
+  worthless on `spacetime-air`.
+- **Env contract** — `HERMES_AUTH_SERVER_URL` + `HERMES_AUTH_PROJECT`
+  drive `HermesIDAuth` by default. Both are **required**; the middleware
+  refuses to start without a project (no silent unscoped mode).
+- **FastAPI-free path** — `verify_token_offline()` works in CLI tools, cron
+  jobs, and scripts without FastAPI/httpx.
+- **Best-effort online revocation** — `RevocationChecker` asks the auth
+  server whether a token was revoked, caches answers per token_id (5 min),
+  and fails **open** when the server is unreachable.
+- **Per-project token cache** — `TokenCache` persists tokens at
+  `~/.hermes/auth-tokens/<project>.json` for script/agent reuse.
+- **Server `aud` support** — `/authenticate` accepts `aud`; issued and
+  refreshed tokens carry it; `/verify` echoes it.
+- `AuthFlow.login(aud=...)` / `AuthClient.authenticate(..., aud=...)` scope
+  tokens to a project.
+
+### Removed (landmines)
+
+- **`require_auth` decorator deleted** — it attached a `__fastapi_dependency__`
+  attribute FastAPI silently ignores, producing unauthenticated routes with
+  no error. Use `Depends(auth.verify)`.
+- **`get_agent_did` helper deleted** — it read an `X-Agent-DID` header
+  nothing ever set (always 401). Read `payload["did"]` from the verify
+  dependency instead.
+- `HermesIDAuth(cache_ttl=...)` param replaced by `card_max_age` /
+  `revocation_ttl`; `HermesIDAuth(server_url=...)` alone now raises unless
+  `project`/`HERMES_AUTH_PROJECT` is provided.
+
+### Tests
+
+- `tests/test_sdk.py` added — 32 tests: offline verify (signature/expiry/
+  audience/tamper/malformed), server-card load + cache + stale fallback,
+  revocation (revoked/valid/cached/fail-open), FastAPI dependency
+  (env contract, 401 paths, wrong-audience 401, offline-first when server
+  down), TokenCache round-trip.
+- Test servers bind **ephemeral ports** (port 0) with `should_exit` teardown
+  — no port collisions or orphaned listeners between runs.
+- `HERMES_ID_PASSPHRASE` is set inside the module fixture (restored after),
+  not at import — no cross-module env clobbering.
+- Full suite: **172 passed** (was 140).
+
 ## 1.2.0 — 2026-07-31
 
 ### Added

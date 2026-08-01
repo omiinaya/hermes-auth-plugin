@@ -113,6 +113,7 @@ class AuthenticateRequest(BaseModel):
     challenge_b64: str
     signature_b64: str
     identity_card: str  # JSON-encoded identity card for this DID
+    aud: str = ""  # audience (project name) this token is scoped to
 
 class TokenRefreshRequest(BaseModel):
     token: str
@@ -124,6 +125,7 @@ class AuthTokenData(BaseModel):
     expires_at: float
     token_id: str = ""  # unique token ID for blacklisting
     purpose: str = "auth"
+    aud: str = ""  # audience (project name) — enforced by verifying services
     metadata: dict[str, Any] = field(default_factory=dict)
 
 class VerifyRequest(BaseModel):
@@ -134,6 +136,7 @@ class VerifyResponse(BaseModel):
     did: str = ""
     issued_at: float = 0
     expires_at: float = 0
+    aud: str = ""
     error: str = ""
 
 class RegisterRequest(BaseModel):
@@ -617,12 +620,13 @@ class AuthServer:
                 expires_at=now + self._token_ttl,
                 token_id=token_id,
                 purpose="auth",
+                aud=req.aud,
             )
             token_str = self._sign_token(payload.model_dump())
 
             self._log.info(
-                "Token issued for DID=%s token_id=%s expires_at=%s",
-                req.did, token_id, payload.expires_at,
+                "Token issued for DID=%s token_id=%s aud=%s expires_at=%s",
+                req.did, token_id, req.aud or "(none)", payload.expires_at,
             )
 
             return {
@@ -630,6 +634,7 @@ class AuthServer:
                 "token_id": token_id,
                 "expires_at": payload.expires_at,
                 "did": req.did,
+                "aud": req.aud,
             }
 
         @app.post("/verify")
@@ -646,6 +651,7 @@ class AuthServer:
                 did=payload.get("did", ""),
                 issued_at=payload.get("issued_at", 0),
                 expires_at=payload.get("expires_at", 0),
+                aud=payload.get("aud", ""),
             )
 
         @app.post("/token/refresh")
@@ -675,6 +681,7 @@ class AuthServer:
                 expires_at=now + self._token_ttl,
                 token_id=new_token_id,
                 purpose="auth",
+                aud=payload.get("aud", ""),
             )
             new_token = self._sign_token(new_payload.model_dump())
 
@@ -685,6 +692,7 @@ class AuthServer:
                 "token_id": new_token_id,
                 "expires_at": new_payload.expires_at,
                 "did": payload["did"],
+                "aud": payload.get("aud", ""),
             }
 
         @app.post("/token/revoke")
