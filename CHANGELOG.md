@@ -9,6 +9,22 @@ The user-site install (`/home/hindsight/.local`, which PROD runs) and
 wheel predated both fixes below, so `hermes-id mcp` was still broken on
 the live auth host despite the repo being fixed.
 
+### Fixed — CI and publish workflows failed with exit 127 on the runner
+
+Both workflows' Python-setup step ended with `python --version`, but the
+self-hosted runner's PATH has no bare `python` symlink (only
+`python3`/`python3.11`) — so every CI run failed with exit 127 before a
+single test executed. The steps now use the already-resolved `$PY`.
+Also fixed the stale repo URL (`hermes-id.git` → `hermes-auth-plugin.git`)
+in README/AGENTS clone instructions and the deploy unit.
+
+### Fixed — Dockerfile required a PyPI release that doesn't exist yet
+
+`pip install 'hermes-id[server]'` would fail on `docker build` because
+the package isn't published to PyPI. The image now builds from the
+local source tree instead (self-contained), with a note for when the
+package gets published.
+
 ### Fixed — MCP serverInfo advertised the mcp SDK's version
 
 `Server("hermes-id")` was constructed without a version, so the mcp SDK

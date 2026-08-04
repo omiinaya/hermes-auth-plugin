@@ -1,6 +1,6 @@
 [Unit]
 Description=hermes-id Auth Server
-Documentation=https://github.com/omiinaya/hermes-id
+Documentation=https://github.com/omiinaya/hermes-auth-plugin
 After=network.target
 
 [Service]
@@ -9,7 +9,10 @@ User=hermes-id
 Group=hermes-id
 WorkingDirectory=/opt/hermes-id
 EnvironmentFile=/opt/hermes-id/.env
-ExecStart=/usr/local/bin/hermes-id server --host 0.0.0.0 --port 9488 --dir /opt/hermes-id/identity --db /opt/hermes-id/data/agent_registry.db
+# TLS is strongly recommended for an auth server. Point HERMES_ID_TLS_CERT /
+# HERMES_ID_TLS_KEY (in /opt/hermes-id/.env) at PEM files and the server
+# serves HTTPS; without them it falls back to plain HTTP on 9488.
+ExecStart=/usr/local/bin/hermes-id server --host 0.0.0.0 --port 9488 --dir /opt/hermes-id/identity --db /opt/hermes-id/data/agent_registry.db ${HERMES_ID_TLS_CERT:+--tls-cert $HERMES_ID_TLS_CERT --tls-key $HERMES_ID_TLS_KEY}
 Restart=always
 RestartSec=5
 StandardOutput=journal

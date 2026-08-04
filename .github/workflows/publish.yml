@@ -33,7 +33,9 @@ jobs:
           PY=$(command -v python3.11 || command -v python3)
           $PY -m venv "$RUNNER_TEMP/pypi-venv"
           echo "$RUNNER_TEMP/pypi-venv/bin" >> "$GITHUB_PATH"
-          python --version
+          # NOTE: use $PY, not bare `python` — runner PATH has no `python`
+          # symlink (same exit-127 class as ci.yml).
+          "$PY" --version
 
       - name: Install build tooling
         run: |
