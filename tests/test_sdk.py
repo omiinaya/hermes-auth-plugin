@@ -343,6 +343,35 @@ class TestRevocationChecker:
         checker = RevocationChecker(server_url)
         assert checker.is_revoked(token, "") is False
 
+    def test_expired_entries_swept(self, token, server_url):
+        """Cache entries past their TTL are evicted so a stream of unique
+        token_ids can't grow the dict without limit."""
+        checker = RevocationChecker(server_url)
+        payload = self._token_payload(token)
+        checker.is_revoked(token, payload["token_id"])
+        assert len(checker._cache) == 1
+        # Age the entry past TTL, then sweep directly — must disappear.
+        old = time.time() - checker._ttl - 10.0
+        checker._cache[payload["token_id"]] = (False, old)
+        checker._sweep(time.time())
+        assert len(checker._cache) == 0
+
+    def test_sweep_preserves_fresh_entries(self, token, server_url):
+        """Fresh cache entries survive the sweep."""
+        checker = RevocationChecker(server_url)
+        payload = self._token_payload(token)
+        checker.is_revoked(token, payload["token_id"])
+        checker._sweep(time.time())
+        assert len(checker._cache) == 1
+
+    def test_sweep_triggered_every_64_lookups(self):
+        """The sweep runs opportunistically on cache writes (misses)."""
+        # Unreachable server → every miss fails open fast and writes cache.
+        checker = RevocationChecker("http://127.0.0.1:1", timeout=0.5)
+        checker._sweeps = 63
+        checker.is_revoked("x.y", "tid-0")  # 64th call → sweep runs
+        assert checker._sweeps == 64
+
 
 # ---------------------------------------------------------------------------
 # HermesIDAuth — FastAPI dependency

@@ -323,6 +323,16 @@ class RevocationChecker:
         self._timeout = timeout
         self._verify = verify
         self._cache: dict[str, tuple[bool, float]] = {}  # token_id -> (revoked, checked_at)
+        self._sweeps = 0
+
+    def _sweep(self, now: float) -> None:
+        """Evict cache entries whose TTL has expired, so a stream of unique
+        token_ids can't grow the dict without limit on a long-running
+        service."""
+        cutoff = now - self._ttl
+        stale = [tid for tid, (_, checked_at) in self._cache.items() if checked_at < cutoff]
+        for tid in stale:
+            del self._cache[tid]
 
     def is_revoked(self, token: str, token_id: str) -> bool:
         """Return True if the token has been revoked.
@@ -353,6 +363,11 @@ class RevocationChecker:
             revoked = False  # fail-open when the auth server is unreachable
 
         self._cache[token_id] = (revoked, now)
+        # Opportunistic sweep keeps the table bounded on long-running
+        # services (every 64th lookup evicts expired entries).
+        self._sweeps += 1
+        if self._sweeps % 64 == 0:
+            self._sweep(now)
         return revoked
 
 
