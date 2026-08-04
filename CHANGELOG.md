@@ -31,6 +31,17 @@ leftover process collided with EADDRINUSE and the whole server test
 file failed. The fixture now binds port 0 and hands the pre-bound socket
 to uvicorn by fd — no race, no fixed port.
 
+### Tests — flaky cross-run fixtures eliminated
+
+Further hardening so the full suite is deterministic: the TLS fixtures
+(9496/9497) and handshake fixtures (19487/19488) that still used
+hardcoded ports now use ephemeral ports; and the module-scoped
+`test_server.py`/`test_sdk.py` auth fixtures used `rate_limit_max=100`,
+so accumulated `/challenge` calls across tests tripped 429 spuriously
+under some orderings. Raised to 5000 (the limiter is tested in
+`test_server_edges`, not these fixtures). Full suite now 496 passed,
+2 skipped.
+
 ## 1.4.1 — 2026-08-04
 
 ### Deployed — live environments now run the MCP 2.0 + version-reporting fixes
