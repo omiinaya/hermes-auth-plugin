@@ -1,4 +1,4 @@
-.PHONY: install dev test lint clean plugin-install plugin-symlink server docker docker-run admin
+.PHONY: install dev test lint coverage clean plugin-install plugin-symlink server docker docker-run admin
 
 install:
 	pip install -e .
@@ -15,9 +15,15 @@ test-verbose:
 test-server:
 	python -m pytest tests/test_server.py -v --tb=short
 
+coverage:
+	python -m pytest tests/ --cov=hermes_id --cov-report=term-missing -q
+
+coverage-html:
+	python -m pytest tests/ --cov=hermes_id --cov-report=html -q
+
 lint:
 	python -m py_compile src/hermes_id/*.py
-	ruff check src/ tests/ 2>/dev/null || true
+	truff check src/ tests/ 2>/dev/null || true
 
 clean:
 	rm -rf build/ dist/ *.egg-info/

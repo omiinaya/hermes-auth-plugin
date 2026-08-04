@@ -39,10 +39,12 @@ try:
             _MCP_MODERN = True
         except Exception:  # pragma: no cover — types package always ships with mcp
             _MCP_MODERN = False
-    else:
+    else:  # pragma: no cover — pre-2.0 SDK without add_request_handler
         _MCP_MODERN = False
     HAS_MCP = True
-except ImportError:
+except ImportError:  # pragma: no cover — exercised by the subprocess
+    # test (test_module_import_error_sets_has_mcp_false) that blocks the
+    # mcp import; the in-process coverage tracker can't see subprocesses.
     HAS_MCP = False
     _MCP_MODERN = False
 
