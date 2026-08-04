@@ -4,6 +4,7 @@ Tests for the handshake protocol.
 Covers: full handshake flow (in-process), error cases, transport helpers.
 """
 
+import json
 import socket
 import threading
 import time
@@ -599,3 +600,254 @@ class TestRecvMessageErrors:
         with pytest.raises(HandshakeError):
             recv_message(b, timeout=2)
         b.close()
+
+
+# ---------------------------------------------------------------------------
+# Remaining confirm-path branches + auth-only mode
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmErrorBranches:
+    def _initiator_at_auth_sent(self, alice):
+        hp = _alice_hp(alice, is_responder=False)
+        hp._state = hp._state.__class__.AUTH_SENT
+        return hp
+
+    def test_confirm_invalid_self_signature(self, alice, bob):
+        """A responder card with a bad self-signature is rejected."""
+        hp = self._initiator_at_auth_sent(alice)
+        bob_private, bob_card = bob
+        data = json.loads(bob_card.to_json())
+        data["proof"]["signatureValue"] = data["proof"]["signatureValue"][:-4] + "AAAA"
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="confirm",
+            payload={
+                "identity_card": json.dumps(data),
+                "signature": "AAAA",
+            },
+        ))
+        assert resp.msg_type == "error"
+        assert "invalid self-signature" in resp.payload["error"]
+
+    def test_confirm_card_without_pubkey(self, alice, bob, monkeypatch):
+        hp = self._initiator_at_auth_sent(alice)
+        bob_private, bob_card = bob
+        data = json.loads(bob_card.to_json())
+        data["verification_method"][0]["publicKeyMultibase"] = ""
+        # Rebuild the card so its self-signature covers the emptied key
+        from hermes_id.identity import IdentityCard
+
+        stripped = IdentityCard(**data)
+        # Empty-pubkey cards can't self-verify; bypass so the confirm
+        # pubkey check is the branch under test (defensive, like the server).
+        import hermes_id.handshake as hs_mod
+
+        monkeypatch.setattr(hs_mod, "verify_identity_card", lambda card: True)
+        # Sign the confirm payload with bob's key to isolate the pubkey branch
+        from hermes_id.crypto import _b64 as _c64
+        from hermes_id.crypto import sign as _sign
+
+        payload = {"status": "ok", "peer_did": data["id"], "responder_x25519": ""}
+        sig = _sign(bob_private, json.dumps(payload).encode("utf-8"))
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="confirm",
+            payload={
+                "identity_card": stripped.to_json(),
+                "signature": _c64(sig),
+                **payload,
+            },
+        ))
+        assert resp.msg_type == "error"
+        assert "missing public key" in resp.payload["error"]
+
+    def test_confirm_unparseable_pubkey(self, alice, bob, monkeypatch):
+        hp = self._initiator_at_auth_sent(alice)
+        bob_private, bob_card = bob
+        data = json.loads(bob_card.to_json())
+        data["verification_method"][0]["publicKeyMultibase"] = "u%%%%"
+        from hermes_id.identity import IdentityCard
+
+        stripped = IdentityCard(**data)
+        import hermes_id.handshake as hs_mod
+
+        monkeypatch.setattr(hs_mod, "verify_identity_card", lambda card: True)
+        from hermes_id.crypto import _b64 as _c64
+        from hermes_id.crypto import sign as _sign
+
+        payload = {"status": "ok", "peer_did": data["id"], "responder_x25519": ""}
+        sig = _sign(bob_private, json.dumps(payload).encode("utf-8"))
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="confirm",
+            payload={
+                "identity_card": stripped.to_json(),
+                "signature": _c64(sig),
+                **payload,
+            },
+        ))
+        assert resp.msg_type == "error"
+        assert "Cannot parse responder public key" in resp.payload["error"]
+
+    def test_confirm_bad_confirmation_signature(self, alice, bob):
+        """A confirm signed by the WRONG key is rejected."""
+        hp = self._initiator_at_auth_sent(alice)
+        bob_private, bob_card = bob
+        alice_private, _ = alice
+        payload = {"status": "ok", "peer_did": bob_card.id, "responder_x25519": ""}
+        # Sign with alice's key instead of bob's
+        from hermes_id.crypto import _b64 as _c64
+        from hermes_id.crypto import sign as _sign
+
+        sig = _sign(alice_private, json.dumps(payload).encode("utf-8"))
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="confirm",
+            payload={
+                "identity_card": bob_card.to_json(),
+                "signature": _c64(sig),
+                **payload,
+            },
+        ))
+        assert resp.msg_type == "error"
+        assert "confirmation signature invalid" in resp.payload["error"]
+
+    def test_auth_peer_card_without_pubkey(self, alice, bob, monkeypatch):
+        """AUTH with a peer card missing its public key → error."""
+        from hermes_id.crypto import _b64 as _c64
+        from hermes_id.crypto import sign as _sign
+        from hermes_id.identity import IdentityCard
+
+        hp = _alice_hp(bob, is_responder=True)
+        hp._state = hp._state.__class__.CHALLENGE_SENT  # reach the pubkey check
+        alice_private, alice_card = alice
+        data = json.loads(alice_card.to_json())
+        data["verification_method"][0]["publicKeyMultibase"] = ""
+        stripped = IdentityCard(**data)
+
+        import hermes_id.handshake as hs_mod
+
+        monkeypatch.setattr(hs_mod, "verify_identity_card", lambda card: True)
+
+        challenge = hp._challenge
+        to_verify = challenge + hp.identity_card.id.encode("utf-8")
+        sig = _sign(alice_private, to_verify)
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="auth",
+            payload={
+                "identity_card": stripped.to_json(),
+                "challenge": _c64(challenge),
+                "signature": _c64(sig),
+            },
+        ))
+        assert resp.msg_type == "error"
+        assert "missing public key" in resp.payload["error"]
+
+    def test_auth_peer_card_unparseable_pubkey(self, alice, bob, monkeypatch):
+        from hermes_id.crypto import _b64 as _c64
+        from hermes_id.crypto import sign as _sign
+        from hermes_id.identity import IdentityCard
+
+        hp = _alice_hp(bob, is_responder=True)
+        hp._state = hp._state.__class__.CHALLENGE_SENT  # reach the pubkey check
+        alice_private, alice_card = alice
+        data = json.loads(alice_card.to_json())
+        data["verification_method"][0]["publicKeyMultibase"] = "u%%%%"
+        stripped = IdentityCard(**data)
+
+        import hermes_id.handshake as hs_mod
+
+        monkeypatch.setattr(hs_mod, "verify_identity_card", lambda card: True)
+
+        challenge = hp._challenge
+        to_verify = challenge + hp.identity_card.id.encode("utf-8")
+        sig = _sign(alice_private, to_verify)
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="auth",
+            payload={
+                "identity_card": stripped.to_json(),
+                "challenge": _c64(challenge),
+                "signature": _c64(sig),
+            },
+        ))
+        assert resp.msg_type == "error"
+        assert "Cannot parse peer public key" in resp.payload["error"]
+
+
+class TestAuthOnlyMode:
+    def test_confirm_without_x25519_auth_only(self, alice, bob):
+        """A confirm with no responder_x25519 completes in auth-only mode."""
+        from hermes_id.crypto import _b64 as _c64
+        from hermes_id.crypto import sign as _sign
+
+        confirmed: list = []
+
+        def on_confirm(card, key):
+            confirmed.append((card.id, key))
+
+        hp = HandshakeProtocol(
+            alice[1], alice[0], is_responder=False, on_confirm=on_confirm
+        )
+        hp._state = hp._state.__class__.AUTH_SENT
+        bob_private, bob_card = bob
+        confirm_payload = {
+            "status": "ok",
+            "peer_did": bob_card.id,
+            "responder_x25519": "",  # no session key exchange
+        }
+        # The confirm message must be signed over the exact same JSON shape
+        # the protocol re-builds for verification.
+        to_sign = json.dumps({
+            "status": "ok",
+            "peer_did": bob_card.id,
+            "responder_x25519": "",
+        })
+        sig = _sign(bob_private, to_sign.encode("utf-8"))
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="confirm",
+            payload={
+                "identity_card": bob_card.to_json(),
+                "signature": _c64(sig),
+                **confirm_payload,
+            },
+        ))
+        assert resp.msg_type == "confirm"
+        assert resp.payload["status"] == "authenticated"
+        assert hp.is_authenticated
+        assert hp.session_key is None
+        assert confirmed == [(bob_card.id, b"")]
+
+    def test_confirm_out_of_sequence(self, alice, bob):
+        """A confirm before AUTH_SENT state is rejected."""
+        hp = _alice_hp(alice, is_responder=False)
+        # State is HELLO_SENT (fresh) — confirm is out of sequence
+        resp = hp.handle_message(HandshakeMessage(msg_type="confirm", payload={}))
+        assert resp.msg_type == "error"
+        assert "out of sequence" in resp.payload["error"]
+
+    def test_confirm_unparseable_x25519_fails(self, alice, bob):
+        """A bad responder_x25519 value fails session key derivation."""
+        from hermes_id.crypto import _b64 as _c64
+        from hermes_id.crypto import sign as _sign
+
+        hp = _alice_hp(alice, is_responder=False)
+        hp._state = hp._state.__class__.AUTH_SENT
+        bob_private, bob_card = bob
+        confirm_payload = {
+            "status": "session_established",
+            "peer_did": bob_card.id,
+            "responder_x25519": "%%%%not-base64%%%%",  # unparseable
+        }
+        to_sign = json.dumps({
+            "status": "session_established",
+            "peer_did": bob_card.id,
+            "responder_x25519": "%%%%not-base64%%%%",
+        })
+        sig = _sign(bob_private, to_sign.encode("utf-8"))
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="confirm",
+            payload={
+                "identity_card": bob_card.to_json(),
+                "signature": _c64(sig),
+                **confirm_payload,
+            },
+        ))
+        assert resp.msg_type == "error"
+        assert "Session key derivation failed" in resp.payload["error"]

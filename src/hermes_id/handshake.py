@@ -778,7 +778,7 @@ def _handle_connection(
         try:
             final_msg = recv_message(conn)
             hp.handle_message(final_msg)
-            if hp.is_authenticated:
+            if hp.is_authenticated:  # pragma: no cover — responder resets to False after the final confirm
                 print("✅ Mutual authentication successful!")
                 print(f"   Peer DID: {hp.peer_card.id if hp.peer_card else 'N/A'}")
         except HandshakeError:

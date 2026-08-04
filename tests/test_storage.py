@@ -218,3 +218,109 @@ class TestStorageRotation:
         storage, _, _ = created_identity
         with pytest.raises(Exception):
             storage.rotate("wrong-password")
+
+
+# ---------------------------------------------------------------------------
+# Config + status edge branches
+# ---------------------------------------------------------------------------
+
+
+class TestStorageConfigBranches:
+    def test_config_metadata_none_becomes_empty(self):
+        """StorageConfig(metadata=None) normalizes to {} in __post_init__."""
+        from hermes_id.storage import StorageConfig
+
+        cfg = StorageConfig(metadata=None)
+        assert cfg.metadata == {}
+
+    def test_get_config_reloads_from_file(self, created_identity):
+        """get_config() with _config=None reads the on-disk config."""
+        storage, _, _ = created_identity
+        storage._config = None  # force reload path
+        config = storage.get_config()
+        assert config.version == 1
+        assert config.created_at
+
+    def test_get_config_writes_file_then_reloads(self, tmp_path):
+        """A fresh storage with a pre-existing config file loads it."""
+
+        from hermes_id.storage import IdentityStorage, StorageConfig
+
+        d = str(tmp_path / "ident")
+        storage = IdentityStorage(directory=d)
+        storage.create("password-1234")
+        cfg = StorageConfig(version=1, created_at="2026-01-01T00:00:00Z",
+                            updated_at="2026-01-02T00:00:00Z", kdf="scrypt")
+        storage._write_config(cfg)
+
+        fresh = IdentityStorage(directory=d)
+        fresh._config = None
+        loaded = fresh.get_config()
+        assert loaded.created_at == "2026-01-01T00:00:00Z"
+        assert loaded.kdf == "scrypt"
+
+    def test_get_config_no_file_uses_defaults(self, tmp_path):
+        """get_config() with no config.json returns a default StorageConfig."""
+        from hermes_id.storage import IdentityStorage, StorageConfig
+
+        d = str(tmp_path / "ident")
+        storage = IdentityStorage(directory=d)
+        storage.create("password-1234")
+        # Remove the config file and reset the in-memory cache
+        storage._config_path.unlink()
+        storage._config = None
+        loaded = storage.get_config()
+        assert isinstance(loaded, StorageConfig)
+        assert loaded.version == 1
+
+    def test_show_status_after_rotate_shows_transition(self, created_identity):
+        """show_status() reports the rotation transition proof after rotate."""
+        storage, password, _ = created_identity
+        storage.rotate(password)
+        status = storage.show_status()
+        assert "Rotated" in status
+        assert "transition proof present" in status
+
+    def test_detect_kdf_argon2(self, monkeypatch):
+        """_detect_kdf returns argon2id when the argon2 module is present."""
+        from hermes_id.storage import IdentityStorage
+
+        assert IdentityStorage._detect_kdf() == "argon2id"
+
+    def test_detect_kdf_scrypt_fallback(self, monkeypatch):
+        """Without argon2, _detect_kdf falls back to scrypt."""
+        import builtins
+
+        import hermes_id.storage as storage_mod
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "argon2.low_level":
+                raise ImportError("argon2 not installed")
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        assert storage_mod.IdentityStorage._detect_kdf() == "scrypt"
+
+    def test_detect_kdf_pbkdf2_fallback(self, monkeypatch):
+        """Without argon2 and without scrypt support, use pbkdf2."""
+        import builtins
+
+        import hermes_id.storage as storage_mod
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "argon2.low_level":
+                raise ImportError("argon2 not installed")
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        import hashlib
+
+        def boom(*a, **kw):
+            raise ValueError("scrypt unavailable")
+
+        monkeypatch.setattr(hashlib, "scrypt", boom)
+        assert storage_mod.IdentityStorage._detect_kdf() == "pbkdf2"

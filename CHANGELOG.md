@@ -26,28 +26,51 @@ the running code was 1.4.0. The package's own `__version__` is now the
 source of truth; a mismatch with distribution metadata logs a warning
 and reports the running code's version.
 
-### Tests — CLI + MCP coverage up, server.py at 100%
+### Tests — 100% coverage on every source module (99% total)
 
-- `tests/test_server_edges.py` (+63) — rate-limiter unit + 429 endpoint
-  path, keypair-loading errors, admin-key auto-generation, scoped-admin
-  env parsing, every `/authenticate` failure mode, refresh/revoke edge
-  cases, register validation, scoped-admin denials, list query
-  validation, standalone `verify_auth_token`, `run_server`, and internal
-  branches. Uses in-process TestClient + per-test env fixture. server.py
-  86% → 100%.
-- `tests/test_cli.py` (+30) — handshake listen/connect (success, peer-DID
-  mismatch, default port, password prompt, unlock failure, fallthrough),
-  server/register/mcp dispatchers (missing extra, starts, import errors,
-  project handling, no-project warning), prompt branches (init/sign
-  fallback, short/mismatch password retry, rotate confirm + EOF cancel),
-  verify-sig error paths, export-no-identity. cli.py 70% → 100%.
-- `tests/test_mcp_server.py` (+23) — register_tools against the real mcp
-  2.0 SDK (registration + list/call handlers), the legacy decorator path
-  (fake SDK), dispatch routing for all 7 tools, exception wrapping on both
-  APIs, auth_client login/verify-token-required/import-error,
-  verify_signature/verify_rotation error branches, sign failure,
-  main() guards (no-SDK exit, entrypoint wiring), stdio run() wiring, and
-  the module import-error branch. mcp_server.py 68% → 98%.
+The remaining defensive branches were closed out across two passes
+(server/CLI/MCP first, then the auth-client/SDK/storage/crypto/identity/
+handshake internals):
+
+- `tests/test_server_edges.py` (+63) — every `/authenticate` failure
+  mode, refresh/revoke edge cases, register validation, scoped-admin
+  denials, list query validation, standalone `verify_auth_token`,
+  `run_server`, internal branches. server.py → 100%.
+- `tests/test_cli.py` (+30) — handshake listen/connect branches,
+  server/register/mcp dispatchers, prompt paths, verify-sig errors.
+  cli.py → 100%.
+- `tests/test_mcp_server.py` (+23) — modern + legacy register_tools,
+  dispatch routing, error wrappers, auth_client branches, main/run
+  guards. mcp_server.py 68% → 98%.
+- `tests/test_auth_client.py` (+11) — HERMES_AUTH_VERIFY env parsing
+  (captured via httpx constructor kwarg), sign_challenge /
+  get_identity_card_json without identity/password, refresh_token 401,
+  list_agents query forwarding. auth_client.py → 100%.
+- `tests/test_sdk.py` (+13) — `_card_public_key_bytes` empty/unparseable
+  keys, verify_token_offline no-pubkey (IdentityCard + dict forms),
+  load_server_card env-verify-true, invalid-signed cache rejected,
+  cache stat-OSError fall-through. sdk.py → 100%.
+- `tests/test_storage.py` (+10) — StorageConfig metadata=None
+  normalization, config reload from file, no-file defaults, rotated
+  status line, KDF detection fallbacks. storage.py → 100%.
+- `tests/test_crypto.py` (+8) — secure_zero bytearray, RSA-DER rejection,
+  scrypt/pbkdf2 blob params, `_kdf_id` fallbacks, v1-blob
+  KDF-unavailable skip + all-ImportError InvalidTag. crypto.py → 100%.
+- `tests/test_identity.py` (+7) — did_short truncation, rotation missing
+  signature/fingerprint, unparseable fingerprint, card without
+  signatureValue. identity.py → 100%.
+- `tests/test_handshake.py` (+8) — confirm error branches (bad
+  self-signature, missing/unparseable pubkey, bad confirmation sig),
+  auth peer-pubkey branches, auth-only mode with on_confirm, confirm
+  out-of-sequence, unparseable x25519. handshake.py → 100%.
+- `tests/test_handshake_wrappers.py` (+6) — payload timeout, server
+  KeyboardInterrupt, client auth-failed, final-recv swallow. handshake
+  wrapper console paths → 100%.
+
+Suite: 410 → 469+ tests; total coverage 98% → 99% (every `src/hermes_id`
+module at 100% except mcp_server.py at 98% — its last 4 lines are the
+module-level import-error branch, exercised by a subprocess test the
+coverage tracker can't attribute in-process).
 
 ## 1.4.0 — 2026-08-04
 

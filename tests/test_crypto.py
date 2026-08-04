@@ -337,6 +337,230 @@ class TestDID:
         assert derive_did(k1) != derive_did(k2)
 
 
+# ---------------------------------------------------------------------------
+# Remaining defensive branches
+# ---------------------------------------------------------------------------
+
+
+class TestSecureZero:
+    def test_secure_zero_empty(self):
+        """secure_zero on empty bytes is a no-op."""
+        from hermes_id.crypto import secure_zero
+
+        secure_zero(b"")  # must not raise
+
+    def test_secure_zero_bytearray(self):
+        """secure_zero zeroes a mutable bytearray in place."""
+        from hermes_id.crypto import secure_zero
+
+        data = bytearray(b"secret")
+        secure_zero(data)
+        assert all(b == 0 for b in data)
+
+
+class TestDeserializePublicKey:
+    def test_rejects_non_ed25519_key(self):
+        """deserialize_public_key rejects an RSA public key DER."""
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            PublicFormat,
+        )
+
+        from hermes_id.crypto import deserialize_public_key
+
+        rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        der = rsa_key.public_key().public_bytes(
+            Encoding.DER, PublicFormat.SubjectPublicKeyInfo
+        )
+        with pytest.raises(ValueError, match="Expected Ed25519"):
+            deserialize_public_key(der)
+
+
+class TestBlobParams:
+    def test_scrypt_blob_params(self):
+        """_blob_params_for returns the current scrypt defaults for KDF 1."""
+        from hermes_id.crypto import _KDF_SCRYPT, _blob_params_for
+
+        assert _blob_params_for(_KDF_SCRYPT) == (2**17, 8, 1)
+
+    def test_pbkdf2_blob_params_default(self):
+        from hermes_id.crypto import _KDF_PBKDF2, _blob_params_for
+
+        params = _blob_params_for(_KDF_PBKDF2)
+        assert params[0] > 0  # iterations
+        assert params[1:] == (0, 0)
+
+
+class TestKdfIdFallbacks:
+    def test_kdf_id_argon2_default(self):
+        """_kdf_id returns argon2id in this environment."""
+        from hermes_id.crypto import _KDF_ARGON2, _kdf_id
+
+        assert _kdf_id() == _KDF_ARGON2
+
+    def test_kdf_id_scrypt_fallback(self, monkeypatch):
+        """Without argon2, _kdf_id falls back to scrypt."""
+        import builtins
+
+        import hermes_id.crypto as crypto_mod
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "argon2.low_level":
+                raise ImportError("argon2 not installed")
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        crypto_mod._kdf_id.cache_clear()
+        assert crypto_mod._kdf_id() == crypto_mod._KDF_SCRYPT
+
+    def test_kdf_id_pbkdf2_fallback(self, monkeypatch):
+        """Without argon2 and scrypt, _kdf_id falls back to pbkdf2."""
+        import builtins
+        import hashlib
+
+        import hermes_id.crypto as crypto_mod
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "argon2.low_level":
+                raise ImportError("argon2 not installed")
+            return real_import(name, *a, **kw)
+
+        def boom(*a, **kw):
+            raise ValueError("scrypt unavailable")
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setattr(hashlib, "scrypt", boom)
+        crypto_mod._kdf_id.cache_clear()
+        assert crypto_mod._kdf_id() == crypto_mod._KDF_PBKDF2
+
+
+class TestDeriveStorageKey:
+    def test_wrapper_derives_with_environment_kdf(self):
+        """_derive_storage_key uses the environment's strongest KDF."""
+        from hermes_id.crypto import _derive_storage_key
+
+        key = _derive_storage_key("password", b"0123456789abcdef")
+        assert len(key) == 32
+
+class TestDecryptKeyAllKdfsFail:
+    def test_legacy_v1_blob_all_kdfs_fail_raises(self, keypair):
+        """A legacy blob that no KDF can decrypt raises (not silently None)."""
+        import os
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        from hermes_id.crypto import (
+            _KDF_SCRYPT,
+            _derive_storage_key_with_kdf,
+            _legacy_params_for,
+            decrypt_key,
+        )
+
+        private, _ = keypair
+        from hermes_id.crypto import serialize_private_key
+
+        der = serialize_private_key(private)
+        # Build a blob with a KNOWN key, then corrupt the ciphertext so
+        # every KDF's GCM tag check fails.
+        salt = os.urandom(16)
+        nonce = os.urandom(12)
+        key = _derive_storage_key_with_kdf(
+            "password", salt, _KDF_SCRYPT, _legacy_params_for(_KDF_SCRYPT)
+        )
+        aesgcm = AESGCM(key)
+        ciphertext = aesgcm.encrypt(nonce, der, None)
+        # Flip bytes in the tag region so decryption fails for all KDFs
+        corrupted = salt + nonce + ciphertext[:-4] + bytes(
+            b ^ 0xFF for b in ciphertext[-4:]
+        )
+        with pytest.raises(Exception):  # InvalidTag from the last KDF
+            decrypt_key(corrupted, "password")
+
+    def test_legacy_v1_blob_kdf_unavailable_skips(self, keypair, monkeypatch):
+        """A KDF ImportError inside the v1 loop is skipped, not fatal."""
+        import os
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        from hermes_id.crypto import (
+            _KDF_ARGON2,
+            _KDF_SCRYPT,
+            _derive_storage_key_with_kdf,
+            _legacy_params_for,
+            decrypt_key,
+        )
+
+        private, _ = keypair
+        from hermes_id.crypto import serialize_private_key
+
+        der = serialize_private_key(private)
+        salt = os.urandom(16)
+        nonce = os.urandom(12)
+        # Build a scrypt-encrypted blob: argon2 will ImportError (skip),
+        # scrypt succeeds → the loop must continue past the ImportError.
+        key = _derive_storage_key_with_kdf(
+            "password", salt, _KDF_SCRYPT, _legacy_params_for(_KDF_SCRYPT)
+        )
+        aesgcm = AESGCM(key)
+        ciphertext = aesgcm.encrypt(nonce, der, None)
+        blob = salt + nonce + ciphertext
+
+        real_derive = _derive_storage_key_with_kdf
+        calls: dict = {"kdfs": []}
+
+        def flaky_derive(password, salt, kdf, params):
+            calls["kdfs"].append(kdf)
+            if kdf == _KDF_ARGON2:
+                raise ImportError("argon2 unavailable")
+            return real_derive(password, salt, kdf, params)
+
+        monkeypatch.setattr(
+            "hermes_id.crypto._derive_storage_key_with_kdf", flaky_derive
+        )
+        # First KDF (argon2) raises ImportError → skipped; scrypt decrypts.
+        assert decrypt_key(blob, "password") == der
+        assert calls["kdfs"][0] == _KDF_ARGON2
+        assert calls["kdfs"][1] == _KDF_SCRYPT
+
+    def test_legacy_v1_blob_all_kdfs_import_error_raises_invalid_tag(self, keypair, monkeypatch):
+        """When every KDF raises ImportError, decrypt_key raises InvalidTag
+        (not the ImportError, and not None)."""
+        import os
+
+        from cryptography.exceptions import InvalidTag as CInvalidTag
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        from hermes_id.crypto import (
+            decrypt_key,
+        )
+
+        private, _ = keypair
+        from hermes_id.crypto import serialize_private_key
+
+        der = serialize_private_key(private)
+        salt = os.urandom(16)
+        nonce = os.urandom(12)
+        # Key material doesn't matter — every derivation will ImportError
+        bogus_key = b"K" * 32
+        aesgcm = AESGCM(bogus_key)
+        ciphertext = aesgcm.encrypt(nonce, der, None)
+        blob = salt + nonce + ciphertext
+
+        def always_import_error(password, salt, kdf, params):
+            raise ImportError("no KDF available")
+
+        monkeypatch.setattr(
+            "hermes_id.crypto._derive_storage_key_with_kdf", always_import_error
+        )
+        with pytest.raises(CInvalidTag):
+            decrypt_key(blob, "password")
+
+
 class TestEncoding:
     def test_b64_roundtrip(self):
         data = os.urandom(256)

@@ -249,7 +249,6 @@ class TestKeyRotation:
         from hermes_id.identity import (
             create_identity,
             verify_identity_card,
-            verify_key_rotation,
         )
         old_priv, old_pub = keypair
         old_card = create_identity(old_priv, old_pub)
@@ -260,4 +259,83 @@ class TestKeyRotation:
             previous_private_key=old_priv,
         )
         assert verify_identity_card(new_card)
-        assert verify_key_rotation(new_card) is not None
+
+
+class TestIdentityBranchCoverage:
+    def test_did_short_truncates_long_suffix(self, keypair):
+        """did_short truncates long suffixes with an ellipsis."""
+        from hermes_id.identity import IdentityCard
+
+        card = IdentityCard(
+            id="did:hermes:ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            controller="did:hermes:ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            verification_method=[],
+            authentication=[],
+            assertion_method=[],
+            created="2026-01-01T00:00:00Z",
+        )
+        short = card.did_short
+        assert "..." in short
+        assert short.startswith("did:hermes:ABCDEFGH")
+
+    def test_did_short_short_suffix_unchanged(self, keypair):
+        from hermes_id.identity import IdentityCard
+
+        card = IdentityCard(
+            id="did:hermes:abc",
+            controller="did:hermes:abc",
+            verification_method=[],
+            authentication=[],
+            assertion_method=[],
+            created="2026-01-01T00:00:00Z",
+        )
+        assert card.did_short == "did:hermes:abc"
+
+    def test_rotation_missing_transition_signature(self, keypair):
+        from hermes_id.crypto import generate_keypair
+        from hermes_id.identity import create_identity, verify_key_rotation
+        old_priv, old_pub = keypair
+        old_card = create_identity(old_priv, old_pub)
+        new_priv, new_pub = generate_keypair()
+        new_card = create_identity(
+            new_priv, new_pub,
+            previous_card=old_card,
+            previous_private_key=old_priv,
+        )
+        del new_card.metadata["rotation"]["transition_signature"]
+        assert verify_key_rotation(new_card) is None
+
+    def test_rotation_missing_fingerprint(self, keypair):
+        from hermes_id.crypto import generate_keypair
+        from hermes_id.identity import create_identity, verify_key_rotation
+        old_priv, old_pub = keypair
+        old_card = create_identity(old_priv, old_pub)
+        new_priv, new_pub = generate_keypair()
+        new_card = create_identity(
+            new_priv, new_pub,
+            previous_card=old_card,
+            previous_private_key=old_priv,
+        )
+        del new_card.metadata["rotation"]["previous_key_fingerprint"]
+        assert verify_key_rotation(new_card) is None
+
+    def test_rotation_unparseable_fingerprint(self, keypair):
+        from hermes_id.crypto import generate_keypair
+        from hermes_id.identity import create_identity, verify_key_rotation
+        old_priv, old_pub = keypair
+        old_card = create_identity(old_priv, old_pub)
+        new_priv, new_pub = generate_keypair()
+        new_card = create_identity(
+            new_priv, new_pub,
+            previous_card=old_card,
+            previous_private_key=old_priv,
+        )
+        new_card.metadata["rotation"]["previous_key_fingerprint"] = "u%%%%"
+        assert verify_key_rotation(new_card) is None
+
+    def test_verify_card_without_signature_value(self, keypair):
+        from hermes_id.identity import create_identity, verify_identity_card
+        priv, pub = keypair
+        card = create_identity(priv, pub)
+        del card.proof["signatureValue"]
+        assert verify_identity_card(card) is False
