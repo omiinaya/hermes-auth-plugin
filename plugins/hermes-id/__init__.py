@@ -340,7 +340,7 @@ def _handle(raw_args: str) -> str:
             )
             if result.returncode != 0:
                 return f"❌ {result.stderr.strip()}"
-            return f"❌ Denied `{did}`"
+            return f"✅ Denied `{did}`"
 
         if sub_cmd == "status":
             if not rest:

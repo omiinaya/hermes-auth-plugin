@@ -1,4 +1,4 @@
-.PHONY: install dev test lint coverage clean plugin-install plugin-symlink server docker docker-run admin
+.PHONY: install dev test lint coverage clean clean-db plugin-install plugin-symlink server docker docker-run admin
 
 install:
 	pip install -e .
@@ -29,7 +29,12 @@ clean:
 	rm -rf build/ dist/ *.egg-info/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name '*.pyc' -delete
-	rm -f agent_registry.db invalidated_tokens.db
+
+# Data-loss footgun guard: databases are NOT build artifacts, so `clean`
+# never touches them. Use this target explicitly (and only on dev DBs):
+clean-db:
+	@echo "Removing local dev databases (repo-root only):"
+	rm -fv agent_registry.db invalidated_tokens.db
 
 server:
 	@echo "Starting hermes-id Auth Server..."
