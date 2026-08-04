@@ -4,6 +4,7 @@ Tests for the handshake protocol.
 Covers: full handshake flow (in-process), error cases, transport helpers.
 """
 
+import socket
 import threading
 import time
 
@@ -16,6 +17,7 @@ from hermes_id.crypto import (
     generate_keypair,
 )
 from hermes_id.handshake import (
+    HandshakeError,
     HandshakeMessage,
     HandshakeProtocol,
     recv_message,
@@ -379,3 +381,221 @@ class TestHandshakeIntegration:
         # In our implementation, we pass peer_did to the on_verify callback
         assert success is True  # protocol succeeds
         assert peer_card.id == bob_card.id  # peer is who they say they are
+
+
+# ---------------------------------------------------------------------------
+# Protocol error-path coverage (the defensive branches)
+# ---------------------------------------------------------------------------
+
+def _alice_hp(alice, is_responder=False):
+    private, card = alice
+    return HandshakeProtocol(card, private, is_responder=is_responder)
+
+
+class TestMessageEncodeDecodeErrors:
+    def test_decode_too_large(self):
+        import struct
+
+        from hermes_id.handshake import _MAX_MESSAGE_SIZE
+
+        oversized = struct.pack("!I", _MAX_MESSAGE_SIZE + 1) + b"x" * 16
+        with pytest.raises(ValueError):
+            HandshakeMessage.decode(oversized)
+
+
+class TestProtocolSequenceErrors:
+    def test_hello_when_not_responder(self, alice):
+        hp = _alice_hp(alice, is_responder=False)
+        resp = hp.handle_message(HandshakeMessage(msg_type="hello", payload={"from": "x"}))
+        assert resp.msg_type == "error"
+        assert "Not a responder" in resp.payload["error"]
+
+    def test_hello_out_of_sequence(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        hp.start()  # moves state to HELLO_SENT (not IDLE)
+        resp = hp.handle_message(HandshakeMessage(msg_type="hello", payload={"from": "x"}))
+        assert resp.msg_type == "error"
+        assert "out of sequence" in resp.payload["error"]
+
+    def test_challenge_when_responder(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        resp = hp.handle_message(HandshakeMessage(msg_type="challenge", payload={}))
+        assert resp.msg_type == "error"
+        assert "Not an initiator" in resp.payload["error"]
+
+    def test_challenge_out_of_sequence(self, alice):
+        hp = _alice_hp(alice, is_responder=False)
+        resp = hp.handle_message(HandshakeMessage(msg_type="challenge", payload={}))
+        assert resp.msg_type == "error"
+        assert "out of sequence" in resp.payload["error"]
+
+    def test_challenge_malformed(self, alice):
+        hp = _alice_hp(alice, is_responder=False)
+        hp.start()
+        resp = hp.handle_message(HandshakeMessage(msg_type="challenge", payload={"from": "x"}))
+        assert resp.msg_type == "error"
+        assert "Malformed" in resp.payload["error"]
+
+    def test_auth_when_not_responder(self, alice):
+        hp = _alice_hp(alice, is_responder=False)
+        resp = hp.handle_message(HandshakeMessage(msg_type="auth", payload={}))
+        assert resp.msg_type == "error"
+        assert "Not a responder" in resp.payload["error"]
+
+    def test_auth_out_of_sequence(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        resp = hp.handle_message(HandshakeMessage(msg_type="auth", payload={}))
+        assert resp.msg_type == "error"
+        assert "out of sequence" in resp.payload["error"]
+
+    def test_auth_missing_card(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        hp._state = hp._state.__class__.CHALLENGE_SENT  # reach the card check
+        resp = hp.handle_message(HandshakeMessage(msg_type="auth", payload={}))
+        assert resp.msg_type == "error"
+        assert "Missing identity card" in resp.payload["error"]
+
+    def test_auth_invalid_card_json(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        hp._state = hp._state.__class__.CHALLENGE_SENT
+        resp = hp.handle_message(HandshakeMessage(msg_type="auth", payload={"identity_card": "not json"}))
+        assert resp.msg_type == "error"
+        assert "Invalid identity card" in resp.payload["error"]
+
+    def test_auth_invalid_self_signature(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        hp._state = hp._state.__class__.CHALLENGE_SENT
+        alice_private, alice_card = alice
+        import json as _json
+
+        bad = _json.loads(alice_card.to_json())
+        bad["proof"]["signatureValue"] = bad["proof"]["signatureValue"][:-4] + "AAAA"
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="auth",
+            payload={"identity_card": _json.dumps(bad), "signature": _b64(b"x" * 64)},
+        ))
+        assert resp.msg_type == "error"
+        assert "self-signature" in resp.payload["error"]
+
+    def test_auth_missing_signature(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        hp._state = hp._state.__class__.CHALLENGE_SENT
+        alice_private, alice_card = alice
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="auth",
+            payload={"identity_card": alice_card.to_json()},
+        ))
+        assert resp.msg_type == "error"
+        assert "Missing authentication signature" in resp.payload["error"]
+
+    def test_auth_card_without_key_fails_at_self_signature(self, alice, bob):
+        """A card whose verification_method is empty is rejected at the
+        self-signature stage (verify_identity_card requires a public key),
+        so it can never reach the auth signature check."""
+        hp = _alice_hp(bob, is_responder=True)
+        hp._state = hp._state.__class__.CHALLENGE_SENT
+        alice_private, alice_card = alice
+        import json as _json
+
+        no_key = _json.loads(alice_card.to_json())
+        no_key["verification_method"] = []
+        resp = hp._handle_auth(HandshakeMessage(
+            msg_type="auth",
+            payload={"identity_card": _json.dumps(no_key), "signature": _b64(b"x" * 64)},
+        ))
+        assert resp.msg_type == "error"
+        # Effective rejection: self-signature cannot be verified without a key
+        assert "self-signature" in resp.payload["error"]
+
+    def test_auth_on_verify_rejects(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        hp.on_verify = lambda card: False  # application policy rejects
+        alice_private, alice_card = alice
+
+        # Responder: hello → challenge
+        hello = HandshakeMessage(msg_type="hello", payload={"from": alice_card.id})
+        challenge_resp = hp._handle_hello(hello)
+        assert challenge_resp.msg_type == "challenge"
+        hp._challenge = _unb64(challenge_resp.payload["challenge"])
+
+        # Initiator: challenge → auth
+        initiator = _alice_hp(alice, is_responder=False)
+        initiator._state = initiator._state.__class__.HELLO_SENT
+        initiator._challenge = hp._challenge
+        initiator.peer_did = bob[1].id
+        auth_msg = initiator._handle_challenge(challenge_resp)
+        assert auth_msg.msg_type == "auth"
+
+        resp = hp._handle_auth(auth_msg)
+        assert resp.msg_type == "error"
+        assert "rejected by application policy" in resp.payload["error"]
+
+    def test_confirm_when_responder(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        resp = hp.handle_message(HandshakeMessage(msg_type="confirm", payload={}))
+        assert resp.msg_type == "error"
+        assert "Not an initiator" in resp.payload["error"]
+
+    def test_confirm_missing_card(self, alice):
+        hp = _alice_hp(alice, is_responder=False)
+        hp._state = hp._state.__class__.AUTH_SENT
+        resp = hp.handle_message(HandshakeMessage(msg_type="confirm", payload={}))
+        assert resp.msg_type == "error"
+        assert "Missing responder identity card" in resp.payload["error"]
+
+    def test_confirm_invalid_card(self, alice):
+        hp = _alice_hp(alice, is_responder=False)
+        hp._state = hp._state.__class__.AUTH_SENT
+        resp = hp.handle_message(HandshakeMessage(msg_type="confirm", payload={"identity_card": "garbage"}))
+        assert resp.msg_type == "error"
+        assert "Invalid responder identity card" in resp.payload["error"]
+
+    def test_confirm_missing_signature(self, alice, bob):
+        hp = _alice_hp(alice, is_responder=False)
+        hp._state = hp._state.__class__.AUTH_SENT
+        bob_private, bob_card = bob
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="confirm",
+            payload={"identity_card": bob_card.to_json()},
+        ))
+        assert resp.msg_type == "error"
+        assert "Missing confirmation signature" in resp.payload["error"]
+
+    def test_error_message_raises(self, alice, bob):
+        hp = _alice_hp(bob, is_responder=True)
+        with pytest.raises(HandshakeError) as exc:
+            hp.handle_message(HandshakeMessage(msg_type="error", payload={"error": "peer exploded"}))
+        assert "peer exploded" in str(exc.value)
+
+
+class TestRecvMessageErrors:
+    def test_recv_connection_closed(self):
+        a, b = socket.socketpair()
+        a.close()
+        with pytest.raises(HandshakeError) as exc:
+            recv_message(b, timeout=2)
+        assert "Connection" in str(exc.value) or "closed" in str(exc.value)
+
+    def test_recv_oversized_length(self):
+        import struct
+
+        from hermes_id.handshake import _MAX_MESSAGE_SIZE
+
+        a, b = socket.socketpair()
+        a.sendall(struct.pack("!I", _MAX_MESSAGE_SIZE + 1))
+        with pytest.raises(HandshakeError) as exc:
+            recv_message(b, timeout=2)
+        assert "too large" in str(exc.value).lower()
+        a.close()
+        b.close()
+
+    def test_recv_truncated_payload_closes(self):
+        import struct
+
+        a, b = socket.socketpair()
+        # declare 100 bytes but send only 2 → connection closed mid-payload
+        a.sendall(struct.pack("!I", 100) + b"ab")
+        a.close()
+        with pytest.raises(HandshakeError):
+            recv_message(b, timeout=2)
+        b.close()

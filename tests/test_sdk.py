@@ -578,7 +578,7 @@ class TestVerifyTokenOfflineMalformedInputs:
 
     def test_card_with_bad_public_key_rejected(self, token, server_card):
         bad = dict(server_card)
-        bad["verificationMethod"] = [{
+        bad["verification_method"] = [{
             "id": "x", "type": "Ed25519VerificationKey2020",
             "controller": bad["id"],
             "publicKeyMultibase": "uzzz",  # garbage multibase
