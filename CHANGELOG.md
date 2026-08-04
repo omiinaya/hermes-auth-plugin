@@ -1,6 +1,31 @@
 # Changelog
 
-## Unreleased
+## 1.4.1 — 2026-08-04
+
+### Deployed — live environments now run the MCP 2.0 + version-reporting fixes
+
+The user-site install (`/home/hindsight/.local`, which PROD runs) and
+`/opt/hermes-id/dist` were rebuilt from this release — the previous
+wheel predated both fixes below, so `hermes-id mcp` was still broken on
+the live auth host despite the repo being fixed.
+
+### Fixed — MCP serverInfo advertised the mcp SDK's version
+
+`Server("hermes-id")` was constructed without a version, so the mcp SDK
+fell back to its OWN version in `serverInfo` on `initialize` (clients
+saw `1.23.3` — the SDK's version — instead of hermes-id's). The real
+hermes-id `__version__` is now passed to the Server constructor.
+
+### Tests — modern-SDK MCP tests skip cleanly on mcp < 2.0
+
+`TestRegisterToolsModern` hard-required the mcp 2.0 `Server` API
+(`get_request_handler`), so the suite failed outright whenever an older
+mcp SDK (1.x) was installed in the test environment — even though the
+source's `_MCP_MODERN` detection makes the legacy path the correct one
+there. The class now skips with a clear reason when the installed SDK
+predates 2.0, and the legacy path stays covered by
+`TestRegisterToolsLegacy`. Verified green on both mcp 1.29.0 (skips) and
+mcp 2.0.0 (46/46 pass).
 
 ### Fixed — MCP server crashed with mcp SDK >= 2.0
 

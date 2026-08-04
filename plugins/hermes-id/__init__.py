@@ -1,5 +1,5 @@
 """
-Hermes Agent plugin for hermes-id v1.4.0.
+Hermes Agent plugin for hermes-id v1.4.1.
 
 This plugin registers a ``/hermes-id`` slash command that provides
 identity management, auth server management, and agent registry admin

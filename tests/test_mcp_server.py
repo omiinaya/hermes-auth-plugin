@@ -442,7 +442,26 @@ class TestAuthClient:
 
 class TestRegisterToolsModern:
     """Drive the real mcp 2.0 SDK: register_tools must not crash and the
-    registered handlers must answer tools/list and tools/call."""
+    registered handlers must answer tools/list and tools/call.
+
+    Skipped when the installed mcp SDK predates the 2.0 API
+    (``add_request_handler`` / ``get_request_handler``) — these tests
+    need the real modern Server object, and the source's own
+    ``_MCP_MODERN`` detection means an older SDK legitimately takes the
+    legacy decorator path (covered by TestRegisterToolsLegacy)."""
+
+    @pytest.fixture(autouse=True)
+    def _require_modern_sdk(self):
+        from mcp.server.lowlevel import Server as LowLevelServer
+
+        if not (
+            hasattr(LowLevelServer, "add_request_handler")
+            and hasattr(LowLevelServer, "get_request_handler")
+        ):
+            pytest.skip(
+                "mcp SDK < 2.0 installed — modern add_request_handler "
+                "API not available (legacy path covered elsewhere)"
+            )
 
     def _real_server(self, identity_dir):
         from hermes_id.mcp_server import HermesIDMCPServer
@@ -769,6 +788,25 @@ class TestModuleGuards:
         srv._app.run = fake_run  # type: ignore[method-assign]
         asyncio.run(srv.run())
         assert calls.get("ran") is True
+
+    def test_server_advertises_hermes_id_version(self, tmp_path, monkeypatch):
+        """The MCP Server is constructed with hermes-id's own version so
+        serverInfo reports OUR version (1.4.1...), not the mcp SDK's
+        fallback. Older SDKs ignore the kwarg; modern ones advertise it."""
+        import hermes_id.mcp_server as mod
+        from hermes_id import __version__
+
+        captured: dict = {}
+
+        def fake_server(name, **kwargs):
+            captured["name"] = name
+            captured["kwargs"] = kwargs
+            return object.__new__(mod.HermesIDMCPServer)
+
+        monkeypatch.setattr(mod, "Server", fake_server)
+        mod.HermesIDMCPServer(identity_dir="/tmp/nonexistent-xyz")
+        assert captured["name"] == "hermes-id"
+        assert captured["kwargs"].get("version") == __version__
 
     def test_module_import_error_sets_has_mcp_false(self, tmp_path):
         """When the mcp SDK can't be imported, HAS_MCP is False and the

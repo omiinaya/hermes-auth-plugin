@@ -20,6 +20,7 @@ import json
 import os
 import sys
 
+from hermes_id import __version__
 from hermes_id.crypto import _b64, _unb64, sign, verify
 from hermes_id.identity import IdentityCard, verify_identity_card, verify_key_rotation
 from hermes_id.storage import IdentityStorage
@@ -58,7 +59,10 @@ class HermesIDMCPServer:
 
     def __init__(self, identity_dir: str | None = None):
         self._storage = IdentityStorage(directory=identity_dir)
-        self._app = Server("hermes-id")
+        # Pass the real hermes-id version so MCP clients see OUR version in
+        # serverInfo, not the mcp SDK's fallback (older SDKs ignore the
+        # kwarg gracefully; modern ones advertise it on initialize).
+        self._app = Server("hermes-id", version=__version__)
 
     def _get_card(self) -> IdentityCard | None:
         """Get the identity card if configured."""
