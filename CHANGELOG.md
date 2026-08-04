@@ -29,6 +29,16 @@ Python's `urlsafe_b64decode` drops non-alphabet characters by default, so
 messages were accepted as empty instead of failing loudly. `_unb64` now
 uses `b64decode(altchars=b"-_", validate=True)` (the strict form).
 
+### Fixed — stale hardcoded version in the server startup banner
+
+`server.run()` printed `hermes-id Auth Server v1.2.0` while the package is
+at 1.4.0 — the same stale-version bug class previously fixed in the
+health endpoint. Now prints `SERVER_VERSION`. The Hermes plugin
+(`plugin.yaml`, docstring, help text) was also bumped 1.1.0 → 1.4.0.
+Whole-repo ruff now passes (src, tests, plugins, examples) with justified
+per-file-ignores (N999 for hyphenated plugin dirs, B008 for FastAPI
+`Depends` idiom in examples).
+
 ### Tests — CLI / admin CLI / MCP surfaces went 0% → covered
 
 - `tests/test_cli.py` (+30) — init/show/export/status/verify/sign/
