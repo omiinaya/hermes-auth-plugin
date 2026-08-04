@@ -56,8 +56,11 @@ Since v1.3.0 the app-side SDK provides:
 ## Step 1: Deploy the Auth Server
 
 ```bash
-# Install
-pip install 'hermes-id[server]'
+# Install from the repo (not yet published to PyPI — until it is, the
+# source-tree install below is the only way to get the server extra):
+git clone https://github.com/omiinaya/hermes-auth-plugin.git
+cd hermes-auth-plugin
+pip install '.[server]'
 
 # Set passphrase
 export HERMES_ID_PASSPHRASE="your-strong-passphrase"
@@ -71,7 +74,7 @@ hermes-id server --host 0.0.0.0 --port 9488
 
 **Output:**
 ```
-🔐  hermes-id Auth Server v1.3.0
+🔐  hermes-id Auth Server v1.4.1
     Server DID:    did:hermes:wUFSjG64-BBT
     Listening:     http://0.0.0.0:9488
     API docs:      http://0.0.0.0:9488/docs
@@ -184,6 +187,8 @@ cache.clear()
 ### Docker
 
 ```bash
+# Build the image from the repo (there is no prebuilt Docker Hub image):
+docker build -t hermes-id-auth .
 docker run -d \
   --name hermes-id-auth \
   -p 9488:9488 \
@@ -191,7 +196,7 @@ docker run -d \
   -e HERMES_ID_ADMIN_KEY=your-admin-key \
   -v /path/to/identity:/app/identity \
   -v /path/to/data:/app/data \
-  omiinaya/hermes-id:latest
+  hermes-id-auth
 ```
 
 ### Docker Compose
