@@ -27,7 +27,10 @@ jobs:
           # fresh job-local venv so pip can install without permission issues.
           $PY -m venv "$RUNNER_TEMP/ci-venv"
           echo "$RUNNER_TEMP/ci-venv/bin" >> "$GITHUB_PATH"
-          python --version
+          # NOTE: use $PY, not plain `python` — the runner PATH has no bare
+          # `python` symlink, so `python --version` here exits 127 and the
+          # step (and whole job) fails before any test runs.
+          "$PY" --version
 
       - name: Install dependencies
         run: |

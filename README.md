@@ -14,8 +14,8 @@
 
 ```bash
 # 1. Install
-git clone https://github.com/omiinaya/hermes-id.git
-cd hermes-id
+git clone https://github.com/omiinaya/hermes-auth-plugin.git
+cd hermes-auth-plugin
 pip install -e .
 
 # 2. Create your identity (you'll be prompted for a passphrase)
