@@ -502,3 +502,39 @@ class TestAudienceScoping:
         flow = AuthFlow(server_url, identity_dir=scoped_dir)
         _, result = flow.login(aud="spacetime-air")
         assert result["aud"] == "spacetime-air"
+
+
+class TestServerBannerVersion:
+    def test_startup_banner_reports_real_version(self, server_identity, tmp_path, capsys, monkeypatch):
+        """The startup banner must report the real package version, not a
+        hardcoded string (regression: it was pinned to 'v1.2.0' while the
+        package moved to 1.4.0 and the health endpoint was already fixed)."""
+        import builtins
+
+        from hermes_id import __version__
+        from hermes_id.server import AuthServer
+
+        db_path = tmp_path / "banner.db"
+        srv = AuthServer(identity_dir=server_identity, db_path=str(db_path), admin_key="k")
+
+        calls: dict = {}
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "uvicorn":
+                class FakeUvicorn:
+                    @staticmethod
+                    def run(*a2, **kw2):
+                        calls["ran"] = True
+                        return None
+
+                return FakeUvicorn()
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        srv.run(host="127.0.0.1", port=7999)
+
+        out = capsys.readouterr().out
+        assert f"v{__version__}" in out  # banner reports the real version
+        assert "v1.2.0" not in out  # stale hardcode gone
+        assert calls.get("ran") is True

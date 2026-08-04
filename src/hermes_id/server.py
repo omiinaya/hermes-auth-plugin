@@ -1145,7 +1145,7 @@ class AuthServer:
 
         card = self._storage.get_identity_card()
         scheme = "https" if ssl_certfile else "http"
-        print("🔐  hermes-id Auth Server v1.2.0")
+        print(f"🔐  hermes-id Auth Server v{SERVER_VERSION}")
         print(f"    Server DID:    {card.id}")
         print(f"    Listening:     {scheme}://{host}:{port}")
         print(f"    API docs:      {scheme}://{host}:{port}/docs")

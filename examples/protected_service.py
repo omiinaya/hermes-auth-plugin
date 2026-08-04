@@ -165,6 +165,6 @@ if __name__ == "__main__":
     print(f"   Auth server: {AUTH_SERVER_URL}")
     print(f"   Auth project: {AUTH_PROJECT}")
     print(f"   Try: curl http://127.0.0.1:{port}/api/protected")
-    print(f"        (will fail — need Bearer token)")
+    print("        (will fail — need Bearer token)")
     print(f"   Docs: http://127.0.0.1:{port}/docs")
     uvicorn.run(app, host="0.0.0.0", port=port)

@@ -1,5 +1,5 @@
 """
-Hermes Agent plugin for hermes-id v1.1.0.
+Hermes Agent plugin for hermes-id v1.4.0.
 
 This plugin registers a ``/hermes-id`` slash command that provides
 identity management, auth server management, and agent registry admin
@@ -9,13 +9,12 @@ The plugin shells out to the ``hermes-id`` CLI tool for all operations.
 Interactive commands (init, handshake) provide instructions instead.
 """
 
+import contextlib
 import json
 import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -47,7 +46,7 @@ def _find_cli() -> str:
 # ---------------------------------------------------------------------------
 
 _HELP_TEXT = """\
-🔐 **hermes-id v1.1** — Self-Sovereign Identity for this Hermes instance.
+🔐 **hermes-id v1.4** — Self-Sovereign Identity for this Hermes instance.
 
 **Identity:**
   `/hermes-id status`         — Show identity status
@@ -199,10 +198,8 @@ def _handle(raw_args: str) -> str:
     if cmd == "listen":
         port = 9487
         if len(cmd_args) >= 2 and cmd_args[0] == "--port":
-            try:
+            with contextlib.suppress(ValueError):
                 port = int(cmd_args[1])
-            except ValueError:
-                pass
         return (
             "🎧 To start the handshake server:\n\n"
             f"```\nhermes-id handshake listen --dir {_IDENTITY_DIR} --port {port}\n```\n\n"
@@ -237,7 +234,7 @@ def _handle(raw_args: str) -> str:
         if sub_cmd == "stop":
             return (
                 "🛑 To stop the auth server, find its PID:\n\n"
-                f"```\nps aux | grep 'hermes-id server'\nkill <PID>\n```"
+                "```\nps aux | grep 'hermes-id server'\nkill <PID>\n```"
             )
 
         if sub_cmd in ("status", "health"):
@@ -282,7 +279,7 @@ def _handle(raw_args: str) -> str:
             return (
                 "⚠️  HERMES_ID_ADMIN_KEY not set.\n"
                 "Set it in the environment or use the `hermes-id-admin` CLI:\n\n"
-                f"```\nexport HERMES_ID_ADMIN_KEY=your-key\nhermes-id admin ...\n```"
+                "```\nexport HERMES_ID_ADMIN_KEY=your-key\nhermes-id admin ...\n```"
             )
 
         server_url = os.environ.get("HERMES_ID_SERVER_URL", "http://127.0.0.1:9488")
