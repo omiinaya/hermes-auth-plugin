@@ -49,7 +49,10 @@ def auth_server(server_identity, tmp_path_factory):
         challenge_ttl=60,
         admin_key=admin_key,
         cors_origins=["*"],
-        rate_limit_max=100,
+        # Module-scoped server accumulates /challenge calls across many
+        # tests — 100 trips 429 spuriously under some orderings. The limiter
+        # is tested in test_server_edges, not here.
+        rate_limit_max=5000,
     )
 
     # Bind an ephemeral port (0) so concurrent test runs / leftover
@@ -351,6 +354,33 @@ class TestAuthFlow:
 class TestTLSSupport:
     """Auth server can serve HTTPS with a PEM cert/key pair."""
 
+    @staticmethod
+    def _start_tls(app, cert, key, host: str = "127.0.0.1"):
+        """Start a TLS uvicorn server on an EPHEMERAL port (0) so tests
+        never collide with each other or with concurrent runs (the old
+        hardcoded 9496/9497 fixtures collided in the full suite)."""
+        import uvicorn
+
+        config = uvicorn.Config(
+            app, host=host, port=0, log_level="error",
+            ssl_certfile=cert, ssl_keyfile=key,
+        )
+        server = uvicorn.Server(config)
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        deadline = time.time() + 15
+        while not server.started:
+            if time.time() > deadline:
+                raise RuntimeError("uvicorn failed to start")
+            time.sleep(0.05)
+        port = server.servers[0].sockets[0].getsockname()[1]
+
+        def stop():
+            server.should_exit = True
+            thread.join(timeout=5)
+
+        return port, stop
+
     def _gen_cert(self, tmp_path):
         """Generate a self-signed cert for localhost."""
         import datetime
@@ -394,22 +424,7 @@ class TestTLSSupport:
 
         db_path = tmp_path / "tls_registry.db"
         server = AuthServer(identity_dir=server_identity, db_path=str(db_path), admin_key="k")
-        port = 9496
-
-        import uvicorn
-        t = threading.Thread(
-            target=lambda: uvicorn.run(
-                server.app,
-                host="127.0.0.1",
-                port=port,
-                log_level="error",
-                ssl_certfile=cert,
-                ssl_keyfile=key,
-            ),
-            daemon=True,
-        )
-        t.start()
-        time.sleep(2.5)
+        port, stop = self._start_tls(server.app, cert, key)
         try:
             import ssl as ssl_mod
             import urllib.request
@@ -421,7 +436,7 @@ class TestTLSSupport:
                 assert r.status == 200
                 assert "did:hermes:" in body
         finally:
-            t.join(timeout=2)
+            stop()
 
     def test_plain_http_fails_on_tls_port(self, server_identity, tmp_path):
         cert, key = self._gen_cert(tmp_path)
@@ -429,28 +444,13 @@ class TestTLSSupport:
 
         db_path = tmp_path / "tls_registry2.db"
         server = AuthServer(identity_dir=server_identity, db_path=str(db_path), admin_key="k")
-        port = 9497
-
-        import uvicorn
-        t = threading.Thread(
-            target=lambda: uvicorn.run(
-                server.app,
-                host="127.0.0.1",
-                port=port,
-                log_level="error",
-                ssl_certfile=cert,
-                ssl_keyfile=key,
-            ),
-            daemon=True,
-        )
-        t.start()
-        time.sleep(2.5)
+        port, stop = self._start_tls(server.app, cert, key)
         try:
             import httpx
             with pytest.raises(Exception):
                 httpx.get(f"http://127.0.0.1:{port}/identity", timeout=3)
         finally:
-            t.join(timeout=2)
+            stop()
 
 
 # ---------------------------------------------------------------------------

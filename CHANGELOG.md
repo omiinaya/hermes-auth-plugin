@@ -19,6 +19,10 @@ with tests:
    with nothing ever deleting — rows older than the token TTL are now
    pruned opportunistically (safe because expired tokens are rejected
    before the blacklist is consulted).
+4. **RevocationChecker cache** (SDK / FastAPI middleware) cached one
+   dict entry per token_id ever verified and never evicted them — a
+   long-running service grew the cache without limit. An opportunistic
+   sweep on every 64th cache write now evicts entries past their TTL.
 
 ### Tests — server fixture binds an ephemeral port
 

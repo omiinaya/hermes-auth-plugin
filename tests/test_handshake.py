@@ -30,6 +30,18 @@ from hermes_id.identity import (
     create_identity,
 )
 
+
+def _free_port() -> int:
+    """Return an available TCP port (bind port 0, read, release). Tiny
+    race window is acceptable for tests; beats hardcoded ports that
+    collide under concurrent runs."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -318,7 +330,7 @@ class TestHandshakeIntegration:
         alice_private, alice_card = alice
         bob_private, bob_card = bob
 
-        port = 19487  # use a non-standard port to avoid conflicts
+        port = _free_port()
 
         # Start Bob's server in a thread
         stop_event = threading.Event()
@@ -353,7 +365,7 @@ class TestHandshakeIntegration:
         alice_private, alice_card = alice
         bob_private, bob_card = bob
 
-        port = 19488
+        port = _free_port()
 
         stop_event = threading.Event()
         server_thread = threading.Thread(

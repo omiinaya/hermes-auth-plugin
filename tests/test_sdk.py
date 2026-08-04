@@ -107,7 +107,10 @@ def auth_server(server_identity, tmp_path_factory):
             challenge_ttl=60,
             admin_key=_ADMIN_KEY,
             cors_origins=["*"],
-            rate_limit_max=100,
+            # Module-scoped server accumulates /challenge calls across many
+            # tests — a low rate_limit_max trips 429 spuriously. The limiter
+            # is tested in test_server_edges, not here.
+            rate_limit_max=5000,
         )
 
         base_url, stop = _start_uvicorn(server.app)
