@@ -1,4 +1,4 @@
 name: hermes-id
-version: 1.4.2
+version: 1.4.3
 description: "Self-Sovereign Identity — Ed25519 identity cards, mutual auth handshake, HTTP auth server with agent registry, MCP server, and admin CLI. Every instance gets a unique DID and signed credential."
 pip_dependencies: []

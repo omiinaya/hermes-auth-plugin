@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.4.3 — 2026-08-04
+
+### Deployed — RevocationChecker cache fix to all live installs
+
+Rebuilt and redeployed to user-site (PROD), gateway venv, and gateway
+plugin after the 1.4.2 wheel shipped without it.
+
+### Fixed — RevocationChecker cache unbounded growth (DoS)
+
+The SDK/FastAPI middleware's best-effort online revocation checker
+cached one dict entry per token_id ever verified and never evicted
+them — a long-running service grew the cache without limit. An
+opportunistic sweep on every 64th cache write now evicts entries past
+their TTL (fresh entries preserved). +3 tests.
+
+### Tests — flaky cross-run fixtures eliminated
+
+Hardcoded ports in the TLS fixtures (9496/9497) and handshake fixtures
+(19487/19488) replaced with ephemeral ports, and the module-scoped
+`test_server.py`/`test_sdk.py` auth fixtures raised `rate_limit_max`
+100 → 5000 — accumulated `/challenge` calls across tests tripped 429
+spuriously under some orderings, failing the full suite nondeterministically.
+Full suite: 496 passed, 2 skipped.
+
 ## 1.4.2 — 2026-08-04
 
 ### Fixed — three unbounded-growth availability bugs (DoS)
@@ -19,10 +43,6 @@ with tests:
    with nothing ever deleting — rows older than the token TTL are now
    pruned opportunistically (safe because expired tokens are rejected
    before the blacklist is consulted).
-4. **RevocationChecker cache** (SDK / FastAPI middleware) cached one
-   dict entry per token_id ever verified and never evicted them — a
-   long-running service grew the cache without limit. An opportunistic
-   sweep on every 64th cache write now evicts entries past their TTL.
 
 ### Tests — server fixture binds an ephemeral port
 
@@ -30,17 +50,6 @@ with tests:
 leftover process collided with EADDRINUSE and the whole server test
 file failed. The fixture now binds port 0 and hands the pre-bound socket
 to uvicorn by fd — no race, no fixed port.
-
-### Tests — flaky cross-run fixtures eliminated
-
-Further hardening so the full suite is deterministic: the TLS fixtures
-(9496/9497) and handshake fixtures (19487/19488) that still used
-hardcoded ports now use ephemeral ports; and the module-scoped
-`test_server.py`/`test_sdk.py` auth fixtures used `rate_limit_max=100`,
-so accumulated `/challenge` calls across tests tripped 429 spuriously
-under some orderings. Raised to 5000 (the limiter is tested in
-`test_server_edges`, not these fixtures). Full suite now 496 passed,
-2 skipped.
 
 ## 1.4.1 — 2026-08-04
 
