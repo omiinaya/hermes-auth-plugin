@@ -63,6 +63,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+import hermes_id as _hermes_id_pkg
 from hermes_id.crypto import (
     _b64,
     _unb64,
@@ -76,20 +77,35 @@ from hermes_id.identity import (
 )
 from hermes_id.storage import IdentityStorage
 
-try:  # installed distribution (wheel/sdist)
-    from importlib.metadata import version as _pkg_version
-
-    SERVER_VERSION = _pkg_version("hermes-id")
-except Exception:  # pragma: no cover — source-tree dev runs
-    from hermes_id import __version__ as _pkg_version_fallback
-
-    SERVER_VERSION = _pkg_version_fallback
+SERVER_VERSION = _hermes_id_pkg.__version__
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 
 _logger = logging.getLogger("hermes-id.server")
+
+# ---------------------------------------------------------------------------
+# Distribution-metadata sanity check
+# ---------------------------------------------------------------------------
+# The package's own __version__ is the source of truth — distribution
+# metadata (importlib.metadata) can go stale in editable installs (e.g.
+# dist-info not refreshed after a version bump), which caused the startup
+# banner and health endpoint to report old versions.
+try:  # installed distribution (wheel/sdist)
+    from importlib.metadata import version as _pkg_version
+
+    _dist_version = _pkg_version("hermes-id")
+    if _dist_version != SERVER_VERSION:  # pragma: no cover — stale metadata
+        _logger.warning(
+            "Distribution metadata version %r differs from package version %r; "
+            "reporting %r (running code wins).",
+            _dist_version,
+            SERVER_VERSION,
+            SERVER_VERSION,
+        )
+except Exception:  # pragma: no cover — source-tree dev runs
+    pass
 
 # ---------------------------------------------------------------------------
 # Constants

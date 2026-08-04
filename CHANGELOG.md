@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — startup banner / health endpoint reported stale versions
+
+`SERVER_VERSION` preferred `importlib.metadata` (the installed
+distribution's dist-info) over the package's own `__version__`. In
+editable installs the dist-info can go stale after a version bump, so
+the banner and `/health` reported an old version (e.g. `v1.3.0`) while
+the running code was 1.4.0. The package's own `__version__` is now the
+source of truth; a mismatch with distribution metadata logs a warning
+and reports the running code's version.
+
+### Tests — AuthServer failure branches 86% → 100% coverage
+
+- `tests/test_server_edges.py` (+63) — rate-limiter unit + 429 endpoint
+  path, keypair-loading errors (no identity / no passphrase), admin-key
+  auto-generation, scoped-admin-keys env parsing (valid/invalid JSON),
+  every `/authenticate` failure mode (no challenge, expired challenge,
+  malformed card, bad self-signature, DID mismatch, bad signature
+  encoding, card without public key, unparseable public key, wrong
+  signature), refresh edge cases (invalid/revoked/too-old token),
+  revoke of an already-invalid token, register validation branches
+  (bad card JSON, DID mismatch, bad self-signature, project-scope
+  expansion → re-approval, duplicate 409), scoped-admin-key denials
+  across approve/deny/status/delete/list, list query validation
+  (bad status 422, page-size cap, project + search filters),
+  standalone `verify_auth_token` (roundtrip, malformed token, bad
+  signature, expired token, default-storage path, card without pubkey),
+  `run_server` convenience, and internal branches (`_agent_projects`
+  missing/NULL/corrupt rows, `_parse_token` expired / no-pubkey,
+  `GET /identity` when unconfigured).
+- All tests use FastAPI's in-process TestClient (no threads/ports) and a
+  per-test env fixture, so the module never clobbers other test files'
+  `HERMES_ID_PASSPHRASE`.
+
 ## 1.4.0 — 2026-08-04
 
 ### Fixed — key derivation was unusably slow (scrypt N=2^20 ≈ 1 GiB)
