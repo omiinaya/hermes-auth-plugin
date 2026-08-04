@@ -7,6 +7,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](#)
 [![Cryptography](https://img.shields.io/badge/crypto-Ed25519%20%7C%20X25519%20%7C%20AES--256--GCM-green)](#)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](#)
+[![CI](https://github.com/omiinaya/hermes-auth-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/omiinaya/hermes-auth-plugin/actions/workflows/ci.yml)
 
 ---
 
