@@ -183,6 +183,23 @@ class TestRateLimitEndpoint:
             r2 = c.post("/challenge", json={"did": "did:hermes:rate-test"})
             assert r2.status_code == 429
 
+    @pytest.mark.parametrize("path,payload", [
+        ("/verify", {"token": "garbage.token"}),
+        ("/token/refresh", {"token": "garbage.token"}),
+        ("/token/revoke", {"token": "garbage.token"}),
+    ])
+    def test_429_when_exceeded_on_token_endpoints(self, server, server_identity, path, payload):
+        """/verify, /token/refresh and /token/revoke are rate-limited like
+        the other POST endpoints — an unthrottled attacker could burn CPU
+        (verify) or DB writes (revoke) with no limit."""
+        server._rate_limiter._max = 1  # force aggressive limit
+        server._rate_limiter._buckets.clear()
+        with TestClient(server.app) as c:
+            r1 = c.post(path, json=payload)
+            assert r1.status_code in (200, 401)  # first call passes (garbage token → 401; valid → 200)
+            r2 = c.post(path, json=payload)
+            assert r2.status_code == 429
+
 
 class TestChallengeStoreSweep:
     def test_expired_challenges_swept(self, server, server_identity):

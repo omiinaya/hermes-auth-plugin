@@ -802,8 +802,13 @@ class AuthServer:
             }
 
         @app.post("/verify")
-        def verify_endpoint(req: VerifyRequest):
+        def verify_endpoint(req: VerifyRequest, request: Request):
             """Verify a signed auth token."""
+            # Rate-limited like the other POST endpoints: /verify does a
+            # signature check per call, so an unthrottled attacker could
+            # burn CPU. Legitimate callers (SDK RevocationChecker) cache per
+            # token_id for 5 min, so they stay well under the limit.
+            rate_limit(request)
             payload = self.verify_token(req.token)
             if payload is None:
                 return VerifyResponse(
@@ -819,12 +824,16 @@ class AuthServer:
             )
 
         @app.post("/token/refresh")
-        def refresh_token(req: TokenRefreshRequest):
+        def refresh_token(req: TokenRefreshRequest, request: Request):
             """Refresh an expiring token. Issues a new token with a fresh TTL.
 
             The old token must still be valid. The new token extends by the
             configured ``token_ttl`` (default 24h) from the current time.
             """
+            # Rate-limited: refresh mints a fresh signed token per call and
+            # does a full verify — an unthrottled attacker (even with just
+            # one stolen valid token) could mint unbounded tokens / burn CPU.
+            rate_limit(request)
             payload = self.verify_token(req.token)
             if payload is None:
                 raise HTTPException(401, "Token invalid, expired, or revoked")
@@ -860,8 +869,12 @@ class AuthServer:
             }
 
         @app.post("/token/revoke")
-        def revoke_token(req: RevokeRequest):
+        def revoke_token(req: RevokeRequest, request: Request):
             """Revoke a token before it expires."""
+            # Rate-limited: each revoke is a DB write (and a verify) — an
+            # unthrottled attacker with a valid token could hammer the
+            # invalidation table with writes.
+            rate_limit(request)
             payload = self._parse_token(req.token)
             if payload is None:
                 # Token is already invalid for some reason — still return success
