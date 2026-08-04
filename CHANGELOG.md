@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.4.3 — 2026-08-04
+## 1.4.4 — 2026-08-04
+
+### Deployed — token-endpoint rate limiting to the live auth host
+
+Rebuilt and redeployed to user-site (PROD), gateway venv, and gateway
+plugin after the 1.4.3 wheel shipped without it.
 
 ### Fixed — rate-limited /verify, /token/refresh, /token/revoke
 
@@ -10,6 +15,8 @@ could burn CPU on `/verify` (signature check per call), mint tokens via
 `/token/refresh` (verifies AND signs per call), or hammer `/token/revoke`
 into DB writes. All three now call the shared rate limiter. Legitimate
 callers unaffected — the SDK `RevocationChecker` caches per token_id.
+
+## 1.4.3 — 2026-08-04
 
 ### Deployed — RevocationChecker cache fix to all live installs
 
