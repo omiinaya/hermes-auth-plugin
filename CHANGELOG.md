@@ -39,6 +39,29 @@ IP and never removed them, so a stream of one-off IPs grew the table
 without limit. An opportunistic sweep now evicts aged-out buckets every
 64 checks and pathological bursts trim to the most recent max entries.
 
+### Fixed — expired invalidation rows never pruned (DB growth)
+
+`invalidated_tokens` grew forever — every `/token/revoke` inserted a
+row and nothing deleted it. Since token parsing rejects expired tokens
+before consulting the blacklist, a row older than the token TTL is
+redundant. An opportunistic prune on every 64th revoke keeps the table
+bounded.
+
+### Fixed — challenge store unbounded growth (DoS)
+
+`POST /challenge` inserted a per-DID entry that was only removed on
+`/authenticate`. DIDs that never completed the flow (or an attacker
+spamming random DIDs) left entries forever. An opportunistic sweep now
+evicts expired nonces every 64 issuances.
+
+### Tests — server fixture binds an ephemeral port
+
+`tests/test_server.py` hardcoded port 9495, so concurrent runs (or a
+leftover process) collided with EADDRINUSE and the whole server test
+file failed. The fixture now binds port 0 and hands the pre-bound
+socket to uvicorn by fd — no race, no fixed port.
+
+
 
 ### Tests — modern-SDK MCP tests skip cleanly on mcp < 2.0
 
