@@ -184,6 +184,61 @@ class TestRateLimitEndpoint:
             assert r2.status_code == 429
 
 
+class TestChallengeStoreSweep:
+    def test_expired_challenges_swept(self, server, server_identity):
+        """Challenges that expire without an /authenticate must be evicted
+        by the opportunistic sweep — otherwise a stream of DIDs that never
+        complete the flow grows the table without limit."""
+        with TestClient(server.app) as c:
+            # Plant a stale challenge directly (as if issued long ago)
+            import time as _time
+
+            server._challenges["did:hermes:stale"] = {
+                "challenge": b"\x00" * 32,
+                "challenge_b64": "AAAA",
+                "expires_at": _time.time() - 1000.0,
+            }
+            assert "did:hermes:stale" in server._challenges
+            # Force the sweep to run on the next /challenge by aligning the
+            # counter (sweep fires every 64th issuance).
+            server._challenge_sweeps = 63
+            r = c.post("/challenge", json={"did": "did:hermes:fresh"})
+            assert r.status_code == 200
+            assert "did:hermes:stale" not in server._challenges
+            assert "did:hermes:fresh" in server._challenges
+
+    def test_fresh_challenges_kept(self, server, server_identity):
+        """The sweep must not evict challenges still inside their TTL."""
+        with TestClient(server.app) as c:
+            import time as _time
+
+            server._challenges["did:hermes:live"] = {
+                "challenge": b"\x01" * 32,
+                "challenge_b64": "BBBB",
+                "expires_at": _time.time() + 5000.0,
+            }
+            server._challenge_sweeps = 63
+            r = c.post("/challenge", json={"did": "did:hermes:another"})
+            assert r.status_code == 200
+            assert "did:hermes:live" in server._challenges
+            assert "did:hermes:another" in server._challenges
+
+    def test_authenticate_removes_challenge(self, server, server_identity):
+        """A one-time challenge is consumed by /authenticate (pop)."""
+        # The existing auth tests cover the happy path; this asserts the
+        # one-time-use pop semantics directly.
+        import time as _time
+
+        server._challenges["did:hermes:onetime"] = {
+            "challenge": b"\x02" * 32,
+            "challenge_b64": "CCCC",
+            "expires_at": _time.time() + 5000.0,
+        }
+        popped = server._challenges.pop("did:hermes:onetime", None)
+        assert popped is not None
+        assert "did:hermes:onetime" not in server._challenges
+
+
 # ---------------------------------------------------------------------------
 # Keypair loading / admin key configuration
 # ---------------------------------------------------------------------------

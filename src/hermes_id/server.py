@@ -305,6 +305,7 @@ class AuthServer:
         # In-memory stores
         self._challenges: dict[str, dict[str, Any]] = {}
         self._rate_limiter = RateLimiter(max_requests=rate_limit_max, window_seconds=rate_limit_window)
+        self._challenge_sweeps = 0
 
         # Logging
         self._log = _logger
@@ -363,6 +364,19 @@ class AuthServer:
         client_ip = request.client.host if request.client else "unknown"
         if not self._rate_limiter.check(client_ip):
             raise HTTPException(429, "Too many requests. Try again later.")
+
+    def _sweep_challenges(self) -> None:
+        """Drop expired challenge entries so a stream of DIDs that request
+        a challenge but never authenticate can't grow the table without
+        limit. Called opportunistically from create_challenge (bounded to
+        ~1 sweep per N issuances)."""
+        now = time.time()
+        self._challenge_sweeps += 1
+        if self._challenge_sweeps % 64 != 0:
+            return
+        expired = [did for did, e in self._challenges.items() if e["expires_at"] < now]
+        for did in expired:
+            del self._challenges[did]
 
     # ------------------------------------------------------------------
     # Admin auth dependency
@@ -632,6 +646,7 @@ class AuthServer:
         def create_challenge(req: ChallengeRequest, request: Request):
             """Generate a random challenge for a DID. Rate-limited."""
             rate_limit(request)
+            self._sweep_challenges()
 
             if not req.did.startswith("did:"):
                 raise HTTPException(400, "Invalid DID format — must start with 'did:'")
