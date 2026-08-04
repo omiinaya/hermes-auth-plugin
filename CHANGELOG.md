@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.4.0 — 2026-08-04
+
+### Fixed — key derivation was unusably slow (scrypt N=2^20 ≈ 1 GiB)
+
+Every interactive operation (`hermes-id init`, unlock, sign, handshake,
+cold auth-server start) paid a **9–18 second** scrypt derivation because
+the historical default was N=2^20, r=8 — a 1 GiB working set (OWASP's
+high-security file-encryption tier, not an interactive-login tier).
+`hermes-id init` took ~18s; each unlock ~10s; the test suite effectively
+hung (194 tests × repeated derivations).
+
+### Changed — v3 blob format (self-describing KDF + parameters)
+
+- **New blob format `HID3`**: `magic(4) + kdf_id(1) + params(12) + salt(16)
+  + nonce(12) + ct+tag`. The 12-byte params block (big-endian u32 triple)
+  records the exact KDF parameters — argon2id (time, memory, lanes),
+  scrypt (n, r, p), pbkdf2 (iterations). Blobs are now fully
+  self-describing: they decrypt correctly on any host, **even after code
+  defaults change in the future**.
+- **scrypt default lowered to N=2^17, r=8, p=1** (~128 MiB, OWASP 2024
+  interactive) — `create`/`unlock` drop from ~10-18s to ~1s.
+- **Legacy blobs keep working**: v2 (`HID2`) and v1 (headerless) blobs are
+  decrypted with **pinned historical parameters** (`_SCRYPT_N_LEGACY =
+  2**20`, argon2id 3/65536/4, pbkdf2 600k). `_legacy_params_for()` is the
+  single source of truth and is guarded by a test so it can never be
+  accidentally changed.
+- **`_kdf_id()` probe made instant + cached** — it used to run a full-cost
+  scrypt derivation on every encrypt just to check availability; now it
+  probes with minimal parameters (n=2) and caches the result per-process.
+- `_scrypt_maxmem_for(n, r)` computes the OpenSSL maxmem cap from the
+  actual parameters (needed because OpenSSL 3.x defaults to 32 MiB).
+
+### Tests
+
+- Blob-format tests updated/added: v3 header + params present, v3 uses
+  *recorded* params (blob with unusual scrypt params decrypts even though
+  code defaults differ), v2 legacy blob still decrypts, legacy scrypt
+  params are pinned (guards the migration), v1 cross-KDF fallback builds
+  blobs with the historical params.
+- Full suite completes in ~90s (previously hung indefinitely).
+
+### Migration notes
+
+- No action needed: existing identities (v1/v2 blobs) decrypt unchanged.
+- New `init`/`rotate` writes v3 blobs with the faster scrypt default.
+- Production identity (argon2id v2 blob, /opt/hermes-id/identity) is
+  unaffected — argon2 parameters are historically unchanged.
+
 ## 1.3.0 — 2026-07-31
 
 ### Added — App-Side SDK (`hermes_id.sdk`)

@@ -74,10 +74,15 @@ analogous to a driver's license or Dominican *cédula*. The identity is:
 | Priority | KDF | When | Strength |
 |----------|-----|------|----------|
 | 1 | Argon2id (argon2-cffi) | Optional pip dep installed | **Highest** — memory-hard + side-channel resistant |
-| 2 | scrypt (hashlib) | Python ≥ 3.6 stdlib | High — memory-hard (N=2^20, r=8, p=1) |
+| 2 | scrypt (hashlib) | Python ≥ 3.6 stdlib | High — memory-hard (N=2^17, r=8, p=1) |
 | 3 | PBKDF2-SHA256 (hashlib) | Fallback if scrypt unavailable | Moderate — CPU-hard only, 600K iterations |
 
 Argon2id configuration: 3 iterations, 64 MiB memory, 4 parallelism lanes.
+
+Blobs record the exact KDF *and its parameters* (v3 format), so
+parameter changes never invalidate existing identities. Blobs created
+before v3 (v1/v2) are decrypted with pinned historical parameters
+(scrypt N=2^20 — the value in effect when they were created).
 
 ## Identity Card Format
 
@@ -168,13 +173,23 @@ Initiator (A)                          Responder (B)
 └── storage.json       # Storage metadata (KDF params, version)
 ```
 
-**private.enc** binary format:
+**private.enc** binary format (v3 — fully self-describing):
 
 ```
-[16 bytes: scrypt/Argon2 salt]
+[4 bytes: magic "HID3"]
+[1 byte:  KDF id — 0=argon2id, 1=scrypt, 2=pbkdf2]
+[12 bytes: KDF parameters (big-endian u32 triple)
+           argon2id: time_cost, memory_cost, parallelism
+           scrypt:   n, r, p
+           pbkdf2:   iterations, 0, 0]
+[16 bytes: KDF salt]
 [12 bytes: AES-GCM nonce]
 [N  bytes: AES-GCM ciphertext + 16-byte authentication tag]
 ```
+
+Legacy formats stay readable: v2 (`HID2` + KDF id, no params — uses pinned
+historical parameters) and v1 (no header — KDFs tried in preference order,
+validated by the GCM tag).
 
 All files are created with `0600` (owner read/write only). The directory
 is `0700`.

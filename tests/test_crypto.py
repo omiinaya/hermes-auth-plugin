@@ -6,6 +6,7 @@ key encryption/decryption, DID derivation, and session key derivation.
 """
 
 import os
+import struct
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -157,24 +158,93 @@ class TestKeyEncryption:
         with pytest.raises(Exception):
             decrypt_key(bytes(encrypted), "password")
 
-    def test_v2_blob_has_self_describing_header(self, keypair):
-        """v2 blobs carry the KDF id so decryption is environment-portable."""
+    def test_v3_blob_has_self_describing_header(self, keypair):
+        """v3 blobs carry the KDF id AND its exact parameters (portable)."""
         private, _ = keypair
         der = serialize_private_key(private)
         blob = encrypt_key(der, "password")
-        assert blob[:4] == b"HID2"
+        assert blob[:4] == b"HID3"
         kdf_id = blob[4]
         assert kdf_id in (0, 1, 2)  # argon2id / scrypt / pbkdf2
-        # Decrypt works (uses the recorded KDF)
+        # Params block present (12 bytes, big-endian u32 triple)
+        a, b, c = struct.unpack(">III", blob[5:17])
+        assert (a, b, c) != (0, 0, 0)
+        # Decrypt works (uses the recorded KDF + params)
         assert decrypt_key(blob, "password") == der
 
+    def test_v3_blob_uses_recorded_params_not_code_defaults(self, keypair):
+        """A v3 blob with unusual scrypt params decrypts even though the
+        code defaults differ — proving params come from the blob."""
+        from hermes_id.crypto import (
+            _BLOB_MAGIC_V3,
+            _KDF_SCRYPT,
+            _derive_storage_key_with_kdf,
+            _pack_params,
+        )
+
+        private, _ = keypair
+        der = serialize_private_key(private)
+        password = "params-test-password"
+        salt = os.urandom(16)
+        nonce = os.urandom(12)
+        unusual = (2**10, 8, 1)  # tiny scrypt cost — definitely != code default (2^17)
+        key = _derive_storage_key_with_kdf(password, salt, _KDF_SCRYPT, unusual)
+        ciphertext = AESGCM(key).encrypt(nonce, der, None)
+        blob = (
+            _BLOB_MAGIC_V3
+            + bytes([_KDF_SCRYPT])
+            + _pack_params(*unusual)
+            + salt
+            + nonce
+            + ciphertext
+        )
+        assert decrypt_key(blob, password) == der
+
+    def test_v2_legacy_blob_still_decrypts(self, keypair):
+        """Historical HID2 blobs (KDF id, no params) keep decrypting via
+        the pinned legacy parameters (pbkdf2 path — parameters unchanged)."""
+        from hermes_id.crypto import (
+            _BLOB_MAGIC_V2,
+            _KDF_PBKDF2,
+            _derive_storage_key_with_kdf,
+            _legacy_params_for,
+        )
+
+        private, _ = keypair
+        der = serialize_private_key(private)
+        password = "legacy-v2-password"
+        salt = os.urandom(16)
+        nonce = os.urandom(12)
+        key = _derive_storage_key_with_kdf(
+            password, salt, _KDF_PBKDF2, _legacy_params_for(_KDF_PBKDF2)
+        )
+        ciphertext = AESGCM(key).encrypt(nonce, der, None)
+        blob = _BLOB_MAGIC_V2 + bytes([_KDF_PBKDF2]) + salt + nonce + ciphertext
+        assert decrypt_key(blob, password) == der
+
+    def test_legacy_scrypt_params_are_pinned(self):
+        """The legacy scrypt parameters must stay at their historical values
+        (N=2^20) or old v1/v2 blobs become undecryptable."""
+        from hermes_id.crypto import (
+            _KDF_SCRYPT,
+            _legacy_params_for,
+        )
+
+        assert _legacy_params_for(_KDF_SCRYPT) == (2**20, 8, 1)
+
     def test_legacy_v1_blob_decrypts_across_kdfs(self, keypair):
-        """A legacy (headerless) blob decrypts no matter which KDF it used."""
+        """A legacy (headerless) blob decrypts no matter which KDF it used.
+
+        Legacy blobs were created with the pinned legacy parameters (scrypt
+        N=2^20, argon2id 3/65536/4, pbkdf2 600k) — the ones in effect before
+        the v3 format recorded parameters.
+        """
         from hermes_id.crypto import (
             _KDF_ARGON2,
             _KDF_PBKDF2,
             _KDF_SCRYPT,
             _derive_storage_key_with_kdf,
+            _legacy_params_for,
         )
 
         private, _ = keypair
@@ -184,7 +254,9 @@ class TestKeyEncryption:
             salt = os.urandom(16)
             nonce = os.urandom(12)
             try:
-                key = _derive_storage_key_with_kdf(password, salt, kdf)
+                key = _derive_storage_key_with_kdf(
+                    password, salt, kdf, _legacy_params_for(kdf)
+                )
             except ImportError:
                 continue  # argon2 not installed in this test env
             aesgcm = AESGCM(key)

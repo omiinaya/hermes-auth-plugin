@@ -81,7 +81,9 @@ try:  # installed distribution (wheel/sdist)
 
     SERVER_VERSION = _pkg_version("hermes-id")
 except Exception:  # pragma: no cover — source-tree dev runs
-    from hermes_id import __version__ as SERVER_VERSION
+    from hermes_id import __version__ as _pkg_version_fallback
+
+    SERVER_VERSION = _pkg_version_fallback
 
 # ---------------------------------------------------------------------------
 # Logging

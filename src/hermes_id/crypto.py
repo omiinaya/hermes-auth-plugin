@@ -7,17 +7,21 @@ Security guarantees
   classically unforgeable under chosen-message attack (SUF-CMA).
 - **Encryption:** AES-256-GCM (authenticated encryption with associated data).
   Provides confidentiality + integrity.
-- **Key derivation:** scrypt (memory-hard password-based KDF, N=2^20).
-  Falls back to PBKDF2-SHA256 if scrypt is unavailable. Optionally
-  upgrades to Argon2id if the `argon2-cffi` package is installed.
+- **Key derivation:** Argon2id (if `argon2-cffi` installed) > scrypt
+  (memory-hard password-based KDF, N=2^17) > PBKDF2-SHA256 fallback.
+  New blobs (v3) record the exact KDF parameters, so they stay
+  decryptable even if defaults change in future versions; legacy v1/v2
+  blobs use pinned historical parameters.
 - **Key agreement:** X25519 ECDH for ephemeral session keys.
 
 All randomness comes from `os.urandom()` (kernel CSPRNG).
 """
 
 import base64
+import functools
 import hashlib
 import os
+import struct
 
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
@@ -68,14 +72,28 @@ _AES_KEY_SIZE = 32  # bytes  (256 bits)
 _AES_NONCE_SIZE = 12  # bytes  (96-bit standard nonce)
 _AES_TAG_SIZE = 16  # bytes  (128-bit authentication tag)
 
-# scrypt parameters (OWASP 2024 recommendations for interactive use)
-_SCRYPT_N = 2**20       # CPU/memory cost parameter
+# Argon2id parameters (OWASP 2024 recommendations — interactive use)
+_ARGON2_TIME_COST = 3          # iterations
+_ARGON2_MEMORY_COST = 65536    # 64 MiB
+_ARGON2_PARALLELISM = 4        # lanes
+
+# scrypt parameters for NEW blobs (OWASP 2024 recommendations for
+# interactive use): N=2^17 with r=8 needs ~128 MiB and ~1s on modern
+# hardware. N=2^20 (~1 GiB, ~10s) was the historical default — far too
+# slow for an interactive CLI; those blobs keep working via the pinned
+# legacy parameters below.
+_SCRYPT_N = 2**17       # CPU/memory cost parameter
 _SCRYPT_R = 8           # blocksize parameter
 _SCRYPT_P = 1           # parallelization parameter
 _SCRYPT_DKLEN = 32      # output key length (AES-256)
-_SCRYPT_MAXMEM = 1_500_000_000  # 1.5 GiB — OpenSSL 3.x defaults to 32 MiB and
-                                # rejects N=2^20,r=8 (~1 GiB + overhead) without
-                                # this; must stay < 2^31-1 (signed int32 cap)
+
+# Legacy scrypt parameters — pinned forever for decrypting v1/v2 blobs
+# (created before the v3 format recorded params). Old blobs carry no
+# parameters, so these historical constants are the ONLY way to derive
+# the same key. Do NOT change.
+_SCRYPT_N_LEGACY = 2**20
+_SCRYPT_R_LEGACY = 8
+_SCRYPT_P_LEGACY = 1
 
 # PBKDF2 fallback (if scrypt unavailable)
 _PBKDF2_ITERATIONS = 600_000
@@ -223,19 +241,71 @@ def derive_session_key(shared_secret: bytes, context: bytes = b"hermes-id/v1") -
 # ---------------------------------------------------------------------------
 
 # Encrypted-blob header so a blob is SELF-DESCRIBING (which KDF was used).
-# Format v2:  b"HID2" + kdf_id(1 byte) + salt(16) + nonce(12) + ciphertext+tag
-# Legacy v1 (no magic):  salt(16) + nonce(12) + ciphertext+tag
+# Blob formats (oldest → newest):
+#   Format v3:  b"HID3" + kdf_id(1) + params(12) + salt(16) + nonce(12) + ct+tag
+#   Format v2:  b"HID2" + kdf_id(1) + salt(16) + nonce(12) + ct+tag
+#   Legacy v1 (no magic):  salt(16) + nonce(12) + ct+tag
+#
+# The v3 params block is 12 bytes, big-endian: [u32 a][u32 b][u32 c]
+#   argon2id:  a=time_cost, b=memory_cost, c=parallelism
+#   scrypt:    a=n, b=r, c=p
+#   pbkdf2:    a=iterations, b=0, c=0
+#
+# Recording parameters makes v3 blobs fully self-describing: they decrypt
+# correctly on any host, even after code defaults change. v1/v2 blobs carry
+# no parameters, so they use the pinned legacy constants (the ones in effect
+# when they were created).
+_BLOB_MAGIC_V3 = b"HID3"
 _BLOB_MAGIC_V2 = b"HID2"
+_BLOB_PARAMS_SIZE = 12
 _KDF_ARGON2 = 0
 _KDF_SCRYPT = 1
 _KDF_PBKDF2 = 2
 _KDF_NAMES = {_KDF_ARGON2: "argon2id", _KDF_SCRYPT: "scrypt", _KDF_PBKDF2: "pbkdf2"}
 
 
+def _blob_params_for(kdf: int) -> tuple[int, int, int]:
+    """KDF parameters used for NEW (v3) blobs in this environment."""
+    if kdf == _KDF_ARGON2:
+        return (_ARGON2_TIME_COST, _ARGON2_MEMORY_COST, _ARGON2_PARALLELISM)
+    if kdf == _KDF_SCRYPT:
+        return (_SCRYPT_N, _SCRYPT_R, _SCRYPT_P)
+    return (_PBKDF2_ITERATIONS, 0, 0)
+
+
+def _legacy_params_for(kdf: int) -> tuple[int, int, int]:
+    """Pinned parameters that historical v1/v2 blobs were created with.
+
+    These must never change: legacy blobs don't record parameters, so
+    this is the only way to derive the same key. Argon2id and PBKDF2
+    parameters are historically unchanged; scrypt was N=2^20.
+    """
+    if kdf == _KDF_ARGON2:
+        return (_ARGON2_TIME_COST, _ARGON2_MEMORY_COST, _ARGON2_PARALLELISM)
+    if kdf == _KDF_SCRYPT:
+        return (_SCRYPT_N_LEGACY, _SCRYPT_R_LEGACY, _SCRYPT_P_LEGACY)
+    return (_PBKDF2_ITERATIONS, 0, 0)
+
+
+def _pack_params(a: int, b: int, c: int) -> bytes:
+    return struct.pack(">III", a, b, c)
+
+
+def _unpack_params(raw: bytes) -> tuple[int, int, int]:
+    return struct.unpack(">III", raw)
+
+
+@functools.lru_cache(maxsize=1)
 def _kdf_id() -> int:
     """Return the KDF id to use for NEW blobs in this environment.
 
     Preference: Argon2id (if argon2-cffi installed) > scrypt > PBKDF2.
+    Cached per-process — KDF availability never changes at runtime.
+
+    The scrypt probe uses minimal cost parameters: it only checks whether
+    OpenSSL's scrypt is available at all. The real derivation cost comes
+    from the parameters chosen by :func:`_blob_params_for`, not from the
+    probe (a full-cost probe would double every encrypt's latency).
     """
     try:
         from argon2.low_level import (  # noqa: F401  # pyright: ignore[reportMissingImports]
@@ -247,46 +317,70 @@ def _kdf_id() -> int:
     except ImportError:
         pass
     try:
-        hashlib.scrypt(
-            password=b"probe", salt=b"probe",
-            n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN,
-            maxmem=_SCRYPT_MAXMEM,
-        )
+        hashlib.scrypt(password=b"p", salt=b"s", n=2, r=1, p=1, dklen=1)
         return _KDF_SCRYPT
     except (ValueError, TypeError):
         return _KDF_PBKDF2
 
 
-def _derive_storage_key_with_kdf(password: str, salt: bytes, kdf: int) -> bytes:
-    """Derive a 256-bit key from *password* + *salt* using the given KDF id."""
+def _scrypt_maxmem_for(n: int, r: int) -> int:
+    """OpenSSL maxmem cap for the given scrypt parameters.
+
+    OpenSSL 3.x defaults to 32 MiB and rejects larger working sets unless
+    maxmem is raised. Required memory is 128 * n * r; we allow that plus
+    1 MiB slack. For N=2^17,r=8 this is ~129 MiB; for legacy N=2^20 it is
+    ~1 GiB (matching the historical cap).
+    """
+    return 128 * n * r + (1 << 20)
+
+
+def _derive_storage_key_with_kdf(
+    password: str,
+    salt: bytes,
+    kdf: int,
+    params: tuple[int, int, int] | None = None,
+) -> bytes:
+    """Derive a 256-bit key from *password* + *salt* using the given KDF id.
+
+    When *params* is omitted, the current defaults for new blobs are used
+    (see :func:`_blob_params_for`). Legacy decrypt paths pass explicit
+    pinned parameters.
+    """
     if kdf == _KDF_ARGON2:
         from argon2.low_level import Type, hash_secret_raw
 
+        time_cost, memory_cost, parallelism = params or (
+            _ARGON2_TIME_COST,
+            _ARGON2_MEMORY_COST,
+            _ARGON2_PARALLELISM,
+        )
         return hash_secret_raw(
             secret=password.encode("utf-8"),
             salt=salt,
-            time_cost=3,        # 3 iterations
-            memory_cost=65536,  # 64 MiB
-            parallelism=4,
+            time_cost=time_cost,
+            memory_cost=memory_cost,
+            parallelism=parallelism,
             hash_len=32,
             type=Type.ID,       # Argon2id — hybrid resistant to side-channel + GPU
         )
     if kdf == _KDF_SCRYPT:
+        n, r, p = params or (_SCRYPT_N, _SCRYPT_R, _SCRYPT_P)
         return hashlib.scrypt(
             password=password.encode("utf-8"),
             salt=salt,
-            n=_SCRYPT_N,
-            r=_SCRYPT_R,
-            p=_SCRYPT_P,
+            n=n,
+            r=r,
+            p=p,
             dklen=_SCRYPT_DKLEN,
-            maxmem=_SCRYPT_MAXMEM,
+            maxmem=_scrypt_maxmem_for(n, r),
         )
     # PBKDF2 fallback
+    iterations = params[0] if params else _PBKDF2_ITERATIONS
     return hashlib.pbkdf2_hmac(
         _PBKDF2_HASH,
         password.encode("utf-8"),
         salt,
-        _PBKDF2_ITERATIONS,
+        iterations,
         dklen=32,
     )
 
@@ -297,61 +391,88 @@ def _derive_storage_key(password: str, salt: bytes) -> bytes:
     return _derive_storage_key_with_kdf(password, salt, _kdf_id())
 
 
-def _pack_blob_v2(kdf: int, salt: bytes, nonce: bytes, ciphertext: bytes) -> bytes:
-    return _BLOB_MAGIC_V2 + bytes([kdf]) + salt + nonce + ciphertext
+def _pack_blob_v3(kdf: int, params: tuple[int, int, int], salt: bytes, nonce: bytes, ciphertext: bytes) -> bytes:
+    return (
+        _BLOB_MAGIC_V3
+        + bytes([kdf])
+        + _pack_params(*params)
+        + salt
+        + nonce
+        + ciphertext
+    )
 
 
 def encrypt_key(private_key_bytes: bytes, password: str) -> bytes:
     """Encrypt a private key with *password* using AES-256-GCM.
 
-    Output format v2 (self-describing — records which KDF derived the key):
-        b"HID2" + kdf_id(1) + salt(16) + nonce(12) + ciphertext + GCM tag(16)
+    Output format v3 (fully self-describing — records both the KDF and
+    its exact parameters):
 
-    The KDF id header makes blobs portable across environments (a blob
-    created where argon2-cffi was installed decrypts correctly on a host
-    without it, as long as that KDF is available or the legacy fallback
-    chain can validate the GCM tag).
+        b"HID3" + kdf_id(1) + params(12) + salt(16) + nonce(12) + ciphertext + GCM tag(16)
+
+    Self-describing blobs are portable across environments AND across
+    future parameter changes: a blob created today decrypts tomorrow no
+    matter what defaults the code evolves to.
     """
     kdf = _kdf_id()
     salt = os.urandom(16)
     nonce = os.urandom(_AES_NONCE_SIZE)
+    params = _blob_params_for(kdf)
 
-    key = _derive_storage_key_with_kdf(password, salt, kdf)
+    key = _derive_storage_key_with_kdf(password, salt, kdf, params)
     aesgcm = AESGCM(key)
     ciphertext = aesgcm.encrypt(nonce, private_key_bytes, None)  # no AAD
 
-    return _pack_blob_v2(kdf, salt, nonce, ciphertext)
+    return _pack_blob_v3(kdf, params, salt, nonce, ciphertext)
 
 
 def decrypt_key(blob: bytes, password: str) -> bytes:
     """Decrypt a private key previously encrypted with :func:`encrypt_key`.
 
-    Supports both the v2 self-describing format and legacy v1 blobs (no
-    header). For legacy blobs, each available KDF is tried in preference
-    order; the AES-GCM tag authenticates the result, so only the KDF that
-    originally encrypted the key can succeed.
+    Supports all three blob formats:
+
+    - **v3** (``HID3``) — fully self-describing: reads the KDF id and its
+      exact parameters from the blob. Decrypts correctly regardless of the
+      code's current defaults.
+    - **v2** (``HID2``) — self-describing KDF only; parameters come from the
+      pinned legacy constants.
+    - **v1** (no header) — each available KDF is tried with the pinned
+      legacy parameters in preference order; the AES-GCM tag authenticates
+      the result, so only the KDF that originally encrypted the key can
+      succeed.
 
     Raises ``cryptography.exceptions.InvalidTag`` if the password is wrong
     or the blob is corrupted.
     """
+    if blob.startswith(_BLOB_MAGIC_V3):
+        kdf = blob[4]
+        params = _unpack_params(blob[5 : 5 + _BLOB_PARAMS_SIZE])
+        payload = blob[5 + _BLOB_PARAMS_SIZE :]
+        salt = payload[0:16]
+        nonce = payload[16:28]
+        ciphertext = payload[28:]
+        key = _derive_storage_key_with_kdf(password, salt, kdf, params)
+        aesgcm = AESGCM(key)
+        return aesgcm.decrypt(nonce, ciphertext, None)
+
     if blob.startswith(_BLOB_MAGIC_V2):
         kdf = blob[4]
         payload = blob[5:]
         salt = payload[0:16]
         nonce = payload[16:28]
         ciphertext = payload[28:]
-        key = _derive_storage_key_with_kdf(password, salt, kdf)
+        key = _derive_storage_key_with_kdf(password, salt, kdf, _legacy_params_for(kdf))
         aesgcm = AESGCM(key)
         return aesgcm.decrypt(nonce, ciphertext, None)
 
-    # Legacy v1 blob — try each KDF in preference order; GCM tag validates.
+    # Legacy v1 blob — try each KDF with pinned legacy params; GCM tag validates.
     salt = blob[0:16]
     nonce = blob[16:28]
     ciphertext = blob[28:]
     last_error: Exception | None = None
     for kdf in (_KDF_ARGON2, _KDF_SCRYPT, _KDF_PBKDF2):
         try:
-            key = _derive_storage_key_with_kdf(password, salt, kdf)
+            key = _derive_storage_key_with_kdf(password, salt, kdf, _legacy_params_for(kdf))
             aesgcm = AESGCM(key)
             return aesgcm.decrypt(nonce, ciphertext, None)
         except ImportError:
