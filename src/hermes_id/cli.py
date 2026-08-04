@@ -183,7 +183,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             return _cmd_register(args)
         elif args.command == "mcp":
             return _cmd_mcp(args)
-        else:
+        else:  # pragma: no cover — argparse validates subcommands
             print(f"Unknown command: {args.command}")
             return 1
     except Exception as e:
@@ -615,7 +615,7 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — entrypoint guard
     sys.exit(main())
 
 __all__ = ["main"]

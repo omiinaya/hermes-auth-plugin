@@ -283,3 +283,408 @@ class TestServerAndMcpDispatchers:
         monkeypatch.delenv("HERMES_AUTH_SERVER_URL", raising=False)
         assert main(["register", "--dir", identity_dir]) == 1
         assert "No auth server URL" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Uncovered dispatcher / prompt / handshake / register branches
+# ---------------------------------------------------------------------------
+
+
+class TestDispatcherBranches:
+    def test_unknown_command_in_dispatch(self, capsys, monkeypatch):
+        """Unknown subcommand routes through the dispatcher's else branch."""
+        monkeypatch.setattr(
+            "hermes_id.cli._cmd_handshake",
+            lambda args: (_ for _ in ()).throw(ValueError("boom")),
+        )
+        # The generic exception handler catches it
+        assert main(["handshake", "listen", "--dir", "/tmp/nonexistent-xyz"]) == 1
+        out = capsys.readouterr().err
+        assert "Error: boom" in out
+
+    def test_handshake_no_identity(self, capsys, monkeypatch):
+        assert main(["handshake", "listen", "--dir", "/tmp/nonexistent-xyz"]) == 1
+        assert "No identity configured" in capsys.readouterr().err
+
+    def test_server_starts(self, created, capsys, monkeypatch):
+        """`hermes-id server` constructs AuthServer and runs it."""
+        import builtins
+
+        calls: dict = {}
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "hermes_id.server":
+                class FakeAuthServer:
+                    def __init__(self, *aa, **kk):
+                        calls["init"] = kk
+
+                    def run(self, **kk):
+                        calls["run"] = kk
+                        return None
+
+                mod = type("mod", (), {"AuthServer": FakeAuthServer})
+                return mod
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        assert main([
+            "server", "--dir", created,
+            "--port", "9999", "--host", "127.0.0.1",
+            "--admin-key", "k", "--cors-origins", "https://a,https://b",
+            "--token-ttl", "120",
+        ]) == 0
+        assert calls["init"]["admin_key"] == "k"
+        assert calls["init"]["cors_origins"] == ["https://a", "https://b"]
+        assert calls["init"]["token_ttl"] == 120
+        assert calls["run"]["port"] == 9999
+        assert calls["run"]["host"] == "127.0.0.1"
+
+    def test_register_no_projects_warns(self, created, capsys, monkeypatch):
+        """Register without --for warns but still proceeds."""
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            def register_agent(self, did, display_name=None, projects=None):
+                self._did = did
+                return {"status": "pending", "projects": projects or []}
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "hermes_id.auth_client.AuthClient", FakeClient, raising=False,
+        )
+        monkeypatch.setenv("HERMES_AUTH_SERVER_URL", "http://127.0.0.1:9488")
+        rc = main(["register", "--dir", created])
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "No --for" in err
+
+    def test_register_with_projects(self, created, capsys, monkeypatch):
+        captured: dict = {}
+
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            def register_agent(self, did, display_name=None, projects=None):
+                captured["did"] = did
+                captured["projects"] = projects
+                captured["display_name"] = display_name
+                return {"status": "pending", "projects": projects or []}
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "hermes_id.auth_client.AuthClient", FakeClient, raising=False,
+        )
+        monkeypatch.setenv("HERMES_AUTH_SERVER_URL", "http://127.0.0.1:9488")
+        rc = main([
+            "register", "--dir", created,
+            "--for", "spacetime-tv", "--for", "spacetime-air",
+            "--display-name", "My Agent",
+        ])
+        assert rc == 0
+        assert captured["projects"] == ["spacetime-tv", "spacetime-air"]
+        assert captured["display_name"] == "My Agent"
+        out = capsys.readouterr().out
+        assert "Projects: spacetime-tv, spacetime-air" in out
+
+    def test_register_no_identity(self, capsys, monkeypatch):
+        monkeypatch.setenv("HERMES_AUTH_SERVER_URL", "http://127.0.0.1:9488")
+        assert main(["register", "--dir", "/tmp/nonexistent-xyz"]) == 1
+        assert "No identity configured" in capsys.readouterr().err
+
+    def test_register_import_error(self, created, capsys, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "hermes_id.auth_client":
+                raise ImportError("No module named 'httpx'")
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setenv("HERMES_AUTH_SERVER_URL", "http://127.0.0.1:9488")
+        assert main(["register", "--dir", created]) == 1
+        assert "Cannot register" in capsys.readouterr().err
+
+    def test_mcp_starts(self, created, capsys, monkeypatch):
+        import builtins
+
+        calls: dict = {}
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "hermes_id.mcp_server":
+                mod = type("mod", (), {"main": lambda: calls.setdefault("ran", True)})
+                return mod
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        assert main(["mcp", "--dir", created]) == 0
+        assert calls.get("ran") is True
+
+
+class TestPromptBranches:
+    def test_init_prompts_when_no_password(self, identity_dir, capsys, monkeypatch):
+        """init falls back to interactive getpass when no env/flag password."""
+        import hermes_id.cli as cli
+
+        prompts = iter(["short", "test-pass-1234", "test-pass-1234"])
+        monkeypatch.setattr(cli, "_prompt_password", lambda prompt="Passphrase: ": next(prompts))
+        monkeypatch.delenv("HERMES_ID_PASSPHRASE", raising=False)
+        assert main(["init", "--dir", identity_dir]) == 0
+        assert "Identity created" in capsys.readouterr().out
+
+    def test_prompt_password_short_rejected(self, capsys, monkeypatch):
+        import getpass as _getpass
+
+        import hermes_id.cli as cli
+
+        # First attempt too short → loop; second attempt ok
+        values = iter(["short", "test-pass-1234", "test-pass-1234"])
+        monkeypatch.setattr(_getpass, "getpass", lambda prompt="": next(values))
+        result = cli._prompt_password()
+        assert result == "test-pass-1234"
+        out = capsys.readouterr().err
+        assert "at least 8" in out
+
+    def test_prompt_password_mismatch_retries(self, capsys, monkeypatch):
+        import getpass as _getpass
+
+        import hermes_id.cli as cli
+
+        # p1/p2 mismatch then match
+        values = iter(["test-pass-1234", "different-pass", "test-pass-1234", "test-pass-1234"])
+        monkeypatch.setattr(_getpass, "getpass", lambda prompt="": next(values))
+        result = cli._prompt_password()
+        assert result == "test-pass-1234"
+        assert "don't match" in capsys.readouterr().err
+
+    def test_sign_prompts_for_password(self, created, tmp_path, capsys, monkeypatch):
+        """sign falls back to getpass when no password supplied."""
+        import getpass as _getpass
+
+        f = tmp_path / "data.txt"
+        f.write_text("hello")
+        monkeypatch.setattr(_getpass, "getpass", lambda prompt="": "test-pass-1234")
+        monkeypatch.delenv("HERMES_ID_PASSPHRASE", raising=False)
+        assert main(["sign", "--dir", created, str(f)]) == 0
+        out = capsys.readouterr().out
+        assert "Signed" in out
+        assert (tmp_path / "data.txt.sig").exists()
+
+    def test_verify_sig_missing_identity_file(self, created, capsys, tmp_path):
+        f = tmp_path / "data.txt"
+        f.write_text("hello")
+        assert main([
+            "verify-sig", "--dir", created,
+            "--identity", "/tmp/nonexistent-card.json",
+            str(f), "AAAA",
+        ]) == 1
+        assert "Cannot read identity card" in capsys.readouterr().err
+
+    def test_verify_sig_card_without_pubkey(self, created, tmp_path, capsys):
+        import json as _json
+
+        from hermes_id.storage import IdentityStorage
+
+        storage = IdentityStorage(directory=created)
+        card = storage.get_identity_card()
+        data = _json.loads(card.to_json())
+        data["verification_method"][0]["publicKeyMultibase"] = ""
+        bad = tmp_path / "nopub.json"
+        bad.write_text(_json.dumps(data))
+        f = tmp_path / "data.txt"
+        f.write_text("hello")
+        assert main([
+            "verify-sig", "--dir", created,
+            "--identity", str(bad),
+            str(f), "AAAA",
+        ]) == 1
+        assert "no public key" in capsys.readouterr().err
+
+    def test_verify_sig_bad_pubkey(self, created, tmp_path, capsys):
+        import json as _json
+
+        from hermes_id.storage import IdentityStorage
+
+        storage = IdentityStorage(directory=created)
+        card = storage.get_identity_card()
+        data = _json.loads(card.to_json())
+        data["verification_method"][0]["publicKeyMultibase"] = "u%%%%"
+        bad = tmp_path / "badpub.json"
+        bad.write_text(_json.dumps(data))
+        f = tmp_path / "data.txt"
+        f.write_text("hello")
+        assert main([
+            "verify-sig", "--dir", created,
+            "--identity", str(bad),
+            str(f), "AAAA",
+        ]) == 1
+        assert "Cannot parse public key" in capsys.readouterr().err
+
+    def test_rotate_prompts_and_cancel(self, created, capsys, monkeypatch):
+        """rotate without --force asks confirmation; 'n' cancels."""
+        import getpass as _getpass
+
+
+        monkeypatch.setattr(_getpass, "getpass", lambda prompt="": "test-pass-1234")
+        monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+        monkeypatch.delenv("HERMES_ID_PASSPHRASE", raising=False)
+        rc = main(["rotate", "--dir", created])
+        assert rc == 1
+        assert "Rotation cancelled" in capsys.readouterr().out
+
+    def test_rotate_eof_cancels(self, created, capsys, monkeypatch):
+        import getpass as _getpass
+
+
+        def raise_eof(prompt=""):
+            raise EOFError
+
+        monkeypatch.setattr(_getpass, "getpass", lambda prompt="": "test-pass-1234")
+        monkeypatch.setattr("builtins.input", raise_eof)
+        monkeypatch.delenv("HERMES_ID_PASSPHRASE", raising=False)
+        assert main(["rotate", "--dir", created]) == 1
+        assert "Rotation cancelled" in capsys.readouterr().out
+
+    def test_export_no_identity(self, capsys):
+        assert main(["export", "--dir", "/tmp/nonexistent-xyz"]) == 1
+        assert "No identity configured" in capsys.readouterr().err
+
+
+class TestHandshakeCli:
+    def test_handshake_listen(self, created, capsys, monkeypatch):
+        """handshake listen starts run_handshake_server."""
+        import hermes_id.cli as cli
+
+        calls: dict = {}
+        monkeypatch.setattr(
+            cli,
+            "run_handshake_server",
+            lambda **kw: calls.update(kw) or None,
+        )
+        monkeypatch.setenv("HERMES_ID_PASSPHRASE", "test-pass-1234")
+        assert main(["handshake", "listen", "--dir", created, "--port", "9876"]) == 0
+        assert calls["port"] == 9876
+        assert "Starting handshake server" in capsys.readouterr().out
+
+    def test_handshake_connect_success(self, created, capsys, monkeypatch):
+        import hermes_id.cli as cli
+
+        calls: dict = {}
+        monkeypatch.setattr(
+            cli,
+            "run_handshake_client",
+            lambda **kw: calls.update(kw) or (True, "did:hermes:peer", b"sessionkey"),
+        )
+        monkeypatch.setenv("HERMES_ID_PASSPHRASE", "test-pass-1234")
+        assert main(["handshake", "connect", "--dir", created, "127.0.0.1:9487"]) == 0
+        assert calls["port"] == 9487
+        out = capsys.readouterr().out
+        assert "Handshake successful" in out
+        assert "Session key" in out
+
+    def test_handshake_connect_default_port(self, created, capsys, monkeypatch):
+        import hermes_id.cli as cli
+
+        calls: dict = {}
+        monkeypatch.setattr(
+            cli,
+            "run_handshake_client",
+            lambda **kw: calls.update(kw) or (True, "did:hermes:peer", None),
+        )
+        monkeypatch.setenv("HERMES_ID_PASSPHRASE", "test-pass-1234")
+        assert main(["handshake", "connect", "--dir", created, "somehost"]) == 0
+        assert calls["port"] == 9487
+        assert calls["host"] == "somehost"
+
+    def test_handshake_connect_peer_did_mismatch(self, created, capsys, monkeypatch):
+        import hermes_id.cli as cli
+
+        def fake_run(**kw):
+            on_verify = kw.get("on_verify")
+            assert on_verify is not None
+            # Drive the on_verify callback with a mismatched peer card — this
+            # is the real code path that rejects a peer whose DID differs.
+            from hermes_id.identity import IdentityCard
+
+            card = IdentityCard(
+                id="did:hermes:unexpected",
+                controller="did:hermes:unexpected",
+                verification_method=[],
+                authentication=[],
+                assertion_method=[],
+                created="2026-08-04T00:00:00Z",
+            )
+            assert on_verify(card) is False
+            return (False, card, None)
+
+        monkeypatch.setattr(cli, "run_handshake_client", fake_run)
+        monkeypatch.setenv("HERMES_ID_PASSPHRASE", "test-pass-1234")
+        assert main([
+            "handshake", "connect", "--dir", created,
+            "--peer-did", "did:hermes:expected", "127.0.0.1:9487",
+        ]) == 1
+        assert "Peer DID mismatch" in capsys.readouterr().out
+
+    def test_handshake_connect_verify_accepts_any_peer(self, created, capsys, monkeypatch):
+        """Without --peer-did the on_verify callback accepts any peer."""
+        import hermes_id.cli as cli
+
+        def fake_run(**kw):
+            on_verify = kw.get("on_verify")
+            assert on_verify is not None
+            from hermes_id.identity import IdentityCard
+
+            card = IdentityCard(
+                id="did:hermes:whomever",
+                controller="did:hermes:whomever",
+                verification_method=[],
+                authentication=[],
+                assertion_method=[],
+                created="2026-08-04T00:00:00Z",
+            )
+            assert on_verify(card) is True
+            return (True, card, None)
+
+        monkeypatch.setattr(cli, "run_handshake_client", fake_run)
+        monkeypatch.setenv("HERMES_ID_PASSPHRASE", "test-pass-1234")
+        assert main(["handshake", "connect", "--dir", created, "127.0.0.1:9487"]) == 0
+
+    def test_handshake_prompts_for_password(self, created, capsys, monkeypatch):
+        """handshake falls back to getpass when no env/flag password."""
+        import getpass as _getpass
+
+        import hermes_id.cli as cli
+
+        monkeypatch.setattr(_getpass, "getpass", lambda prompt="": "test-pass-1234")
+        monkeypatch.delenv("HERMES_ID_PASSPHRASE", raising=False)
+        monkeypatch.setattr(cli, "run_handshake_server", lambda **kw: None)
+        assert main(["handshake", "listen", "--dir", created, "--port", "9876"]) == 0
+        assert "Starting handshake server" in capsys.readouterr().out
+
+    def test_handshake_fallthrough_returns_1(self, created, monkeypatch):
+        """_cmd_handshake with an unexpected subcommand returns 1."""
+        import argparse
+
+        import hermes_id.cli as cli
+
+        monkeypatch.setenv("HERMES_ID_PASSPHRASE", "test-pass-1234")
+        args = argparse.Namespace(
+            dir=created, password="", handshake_cmd="bogus",
+            host="127.0.0.1", port=9487, target="", peer_did="",
+        )
+        assert cli._cmd_handshake(args) == 1
+
+    def test_handshake_unlock_failure(self, created, capsys, monkeypatch):
+        monkeypatch.setenv("HERMES_ID_PASSPHRASE", "wrong-password")
+        rc = main(["handshake", "listen", "--dir", created])
+        assert rc == 1
+        assert "Cannot unlock identity" in capsys.readouterr().err

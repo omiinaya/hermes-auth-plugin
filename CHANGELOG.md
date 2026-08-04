@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed — MCP server crashed with mcp SDK >= 2.0
+
+`register_tools()` used the legacy decorator API (`@app.list_tools()`,
+`@app.call_tool()`) that mcp 2.0 removed in favour of
+`add_request_handler` + low-level params types. With the modern SDK the
+server aborted at startup with `AttributeError: 'Server' object has no
+attribute 'list_tools'` — so `hermes-id mcp` was completely broken on
+fresh installs. Now `register_tools()` detects the SDK API at import
+time and registers tools either way: decorator mode for mcp < 2.0,
+`add_request_handler("tools/list" / "tools/call")` for mcp >= 2.0. Tool
+definitions and dispatch were factored into `_tool_definitions()` /
+`_dispatch()` shared by both paths. Verified end-to-end against the
+installed mcp 2.0 SDK (tools list + call + unknown-tool + error paths).
+
 ### Fixed — startup banner / health endpoint reported stale versions
 
 `SERVER_VERSION` preferred `importlib.metadata` (the installed
@@ -12,28 +26,28 @@ the running code was 1.4.0. The package's own `__version__` is now the
 source of truth; a mismatch with distribution metadata logs a warning
 and reports the running code's version.
 
-### Tests — AuthServer failure branches 86% → 100% coverage
+### Tests — CLI + MCP coverage up, server.py at 100%
 
 - `tests/test_server_edges.py` (+63) — rate-limiter unit + 429 endpoint
-  path, keypair-loading errors (no identity / no passphrase), admin-key
-  auto-generation, scoped-admin-keys env parsing (valid/invalid JSON),
-  every `/authenticate` failure mode (no challenge, expired challenge,
-  malformed card, bad self-signature, DID mismatch, bad signature
-  encoding, card without public key, unparseable public key, wrong
-  signature), refresh edge cases (invalid/revoked/too-old token),
-  revoke of an already-invalid token, register validation branches
-  (bad card JSON, DID mismatch, bad self-signature, project-scope
-  expansion → re-approval, duplicate 409), scoped-admin-key denials
-  across approve/deny/status/delete/list, list query validation
-  (bad status 422, page-size cap, project + search filters),
-  standalone `verify_auth_token` (roundtrip, malformed token, bad
-  signature, expired token, default-storage path, card without pubkey),
-  `run_server` convenience, and internal branches (`_agent_projects`
-  missing/NULL/corrupt rows, `_parse_token` expired / no-pubkey,
-  `GET /identity` when unconfigured).
-- All tests use FastAPI's in-process TestClient (no threads/ports) and a
-  per-test env fixture, so the module never clobbers other test files'
-  `HERMES_ID_PASSPHRASE`.
+  path, keypair-loading errors, admin-key auto-generation, scoped-admin
+  env parsing, every `/authenticate` failure mode, refresh/revoke edge
+  cases, register validation, scoped-admin denials, list query
+  validation, standalone `verify_auth_token`, `run_server`, and internal
+  branches. Uses in-process TestClient + per-test env fixture. server.py
+  86% → 100%.
+- `tests/test_cli.py` (+30) — handshake listen/connect (success, peer-DID
+  mismatch, default port, password prompt, unlock failure, fallthrough),
+  server/register/mcp dispatchers (missing extra, starts, import errors,
+  project handling, no-project warning), prompt branches (init/sign
+  fallback, short/mismatch password retry, rotate confirm + EOF cancel),
+  verify-sig error paths, export-no-identity. cli.py 70% → 100%.
+- `tests/test_mcp_server.py` (+23) — register_tools against the real mcp
+  2.0 SDK (registration + list/call handlers), the legacy decorator path
+  (fake SDK), dispatch routing for all 7 tools, exception wrapping on both
+  APIs, auth_client login/verify-token-required/import-error,
+  verify_signature/verify_rotation error branches, sign failure,
+  main() guards (no-SDK exit, entrypoint wiring), stdio run() wiring, and
+  the module import-error branch. mcp_server.py 68% → 98%.
 
 ## 1.4.0 — 2026-08-04
 

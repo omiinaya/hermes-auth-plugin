@@ -28,9 +28,23 @@ try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
+
+    # mcp >= 2.0 replaced the old decorator API (app.list_tools /
+    # app.call_tool) with add_request_handler + low-level params types.
+    # Detect which API is available so register_tools() works on both.
+    if hasattr(Server, "add_request_handler"):
+        try:
+            import mcp_types
+
+            _MCP_MODERN = True
+        except Exception:  # pragma: no cover — types package always ships with mcp
+            _MCP_MODERN = False
+    else:
+        _MCP_MODERN = False
     HAS_MCP = True
 except ImportError:
     HAS_MCP = False
+    _MCP_MODERN = False
 
 
 # ---------------------------------------------------------------------------
@@ -54,152 +68,192 @@ class HermesIDMCPServer:
     def _get_password(self) -> str:
         return os.environ.get("HERMES_ID_PASSPHRASE") or ""
 
+    def _tool_definitions(self) -> list[Tool]:
+        """The 6 tool definitions advertised by this MCP server."""
+        return [
+            Tool(
+                name="hermes_id_status",
+                description="Get the identity status of this Hermes instance (DID, key type, card validity)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
+            Tool(
+                name="hermes_id_export",
+                description="Export the identity card as JSON",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
+            Tool(
+                name="hermes_id_verify_card",
+                description="Verify an identity card's self-signature",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "identity_card_json": {
+                            "type": "string",
+                            "description": "JSON-encoded identity card to verify",
+                        },
+                    },
+                    "required": ["identity_card_json"],
+                },
+            ),
+            Tool(
+                name="hermes_id_sign",
+                description="Sign a message with this instance's private key",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "message_b64": {
+                            "type": "string",
+                            "description": "Base64-encoded message to sign",
+                        },
+                    },
+                    "required": ["message_b64"],
+                },
+            ),
+            Tool(
+                name="hermes_id_verify_signature",
+                description="Verify a signature against a public key from an identity card",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "message_b64": {
+                            "type": "string",
+                            "description": "Base64-encoded original message",
+                        },
+                        "signature_b64": {
+                            "type": "string",
+                            "description": "Base64-encoded signature",
+                        },
+                        "identity_card_json": {
+                            "type": "string",
+                            "description": "JSON-encoded identity card of the signer",
+                        },
+                    },
+                    "required": ["message_b64", "signature_b64", "identity_card_json"],
+                },
+            ),
+            Tool(
+                name="hermes_id_verify_rotation",
+                description="Verify the key-rotation transition proof on an identity card (was the rotation authorized by the previous key?)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "identity_card_json": {
+                            "type": "string",
+                            "description": "JSON-encoded identity card with rotation metadata",
+                        },
+                    },
+                    "required": ["identity_card_json"],
+                },
+            ),
+            Tool(
+                name="hermes_id_auth_client",
+                description="Full auth client against a hermes-id Auth Server: challenge → sign → authenticate",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "server_url": {
+                            "type": "string",
+                            "description": "URL of the hermes-id Auth Server (e.g. http://localhost:9488)",
+                        },
+                        "action": {
+                            "type": "string",
+                            "enum": ["login", "register", "status", "verify_token"],
+                            "description": "Auth action to perform",
+                        },
+                        "token": {
+                            "type": "string",
+                            "description": "Auth token to verify (for verify_token action)",
+                        },
+                        "display_name": {
+                            "type": "string",
+                            "description": "Display name for registration",
+                        },
+                        "aud": {
+                            "type": "string",
+                            "description": "Audience (project name) to scope the token to (for login)",
+                        },
+                        "projects": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Requested project audiences (for register)",
+                        },
+                    },
+                    "required": ["server_url", "action"],
+                },
+            ),
+        ]
+
+    def _dispatch(self, name: str, arguments: dict) -> str:
+        """Route a tool call to its handler and return the JSON string."""
+        if name == "hermes_id_status":
+            return self._handle_status()
+        elif name == "hermes_id_export":
+            return self._handle_export()
+        elif name == "hermes_id_verify_card":
+            return self._handle_verify_card(arguments)
+        elif name == "hermes_id_sign":
+            return self._handle_sign(arguments)
+        elif name == "hermes_id_verify_signature":
+            return self._handle_verify_signature(arguments)
+        elif name == "hermes_id_verify_rotation":
+            return self._handle_verify_rotation(arguments)
+        elif name == "hermes_id_auth_client":
+            return self._handle_auth_client(arguments)
+        else:
+            return f'{{"error": "Unknown tool: {name}"}}'
+
     def register_tools(self) -> None:
-        """Register all MCP tools."""
+        """Register all MCP tools.
+
+        Supports both the legacy decorator API (mcp < 2.0:
+        ``@app.list_tools`` / ``@app.call_tool``) and the modern
+        ``add_request_handler`` API (mcp >= 2.0), so the server runs
+        against whichever SDK version is installed.
+        """
         app = self._app
+
+        if _MCP_MODERN:
+            self._register_tools_modern(app)
+            return
 
         @app.list_tools()
         async def list_tools() -> list[Tool]:
-            return [
-                Tool(
-                    name="hermes_id_status",
-                    description="Get the identity status of this Hermes instance (DID, key type, card validity)",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                    },
-                ),
-                Tool(
-                    name="hermes_id_export",
-                    description="Export the identity card as JSON",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                    },
-                ),
-                Tool(
-                    name="hermes_id_verify_card",
-                    description="Verify an identity card's self-signature",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "identity_card_json": {
-                                "type": "string",
-                                "description": "JSON-encoded identity card to verify",
-                            },
-                        },
-                        "required": ["identity_card_json"],
-                    },
-                ),
-                Tool(
-                    name="hermes_id_sign",
-                    description="Sign a message with this instance's private key",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "message_b64": {
-                                "type": "string",
-                                "description": "Base64-encoded message to sign",
-                            },
-                        },
-                        "required": ["message_b64"],
-                    },
-                ),
-                Tool(
-                    name="hermes_id_verify_signature",
-                    description="Verify a signature against a public key from an identity card",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "message_b64": {
-                                "type": "string",
-                                "description": "Base64-encoded original message",
-                            },
-                            "signature_b64": {
-                                "type": "string",
-                                "description": "Base64-encoded signature",
-                            },
-                            "identity_card_json": {
-                                "type": "string",
-                                "description": "JSON-encoded identity card of the signer",
-                            },
-                        },
-                        "required": ["message_b64", "signature_b64", "identity_card_json"],
-                    },
-                ),
-                Tool(
-                    name="hermes_id_verify_rotation",
-                    description="Verify the key-rotation transition proof on an identity card (was the rotation authorized by the previous key?)",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "identity_card_json": {
-                                "type": "string",
-                                "description": "JSON-encoded identity card with rotation metadata",
-                            },
-                        },
-                        "required": ["identity_card_json"],
-                    },
-                ),
-                Tool(
-                    name="hermes_id_auth_client",
-                    description="Full auth client against a hermes-id Auth Server: challenge → sign → authenticate",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "server_url": {
-                                "type": "string",
-                                "description": "URL of the hermes-id Auth Server (e.g. http://localhost:9488)",
-                            },
-                            "action": {
-                                "type": "string",
-                                "enum": ["login", "register", "status", "verify_token"],
-                                "description": "Auth action to perform",
-                            },
-                            "token": {
-                                "type": "string",
-                                "description": "Auth token to verify (for verify_token action)",
-                            },
-                            "display_name": {
-                                "type": "string",
-                                "description": "Display name for registration",
-                            },
-                            "aud": {
-                                "type": "string",
-                                "description": "Audience (project name) to scope the token to (for login)",
-                            },
-                            "projects": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Requested project audiences (for register)",
-                            },
-                        },
-                        "required": ["server_url", "action"],
-                    },
-                ),
-            ]
+            return self._tool_definitions()
 
         @app.call_tool()
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             try:
-                if name == "hermes_id_status":
-                    return [TextContent(type="text", text=self._handle_status())]
-                elif name == "hermes_id_export":
-                    return [TextContent(type="text", text=self._handle_export())]
-                elif name == "hermes_id_verify_card":
-                    return [TextContent(type="text", text=self._handle_verify_card(arguments))]
-                elif name == "hermes_id_sign":
-                    return [TextContent(type="text", text=self._handle_sign(arguments))]
-                elif name == "hermes_id_verify_signature":
-                    return [TextContent(type="text", text=self._handle_verify_signature(arguments))]
-                elif name == "hermes_id_verify_rotation":
-                    return [TextContent(type="text", text=self._handle_verify_rotation(arguments))]
-                elif name == "hermes_id_auth_client":
-                    return [TextContent(type="text", text=self._handle_auth_client(arguments))]
-                else:
-                    return [TextContent(type="text", text=f"Unknown tool: {name}")]
+                return [TextContent(type="text", text=self._dispatch(name, arguments))]
             except Exception as e:
                 return [TextContent(type="text", text=f"Error: {e}")]
+
+    def _register_tools_modern(self, app: Server) -> None:
+        """Register tools with the mcp >= 2.0 ``add_request_handler`` API."""
+        import mcp_types
+
+        async def on_list_tools(ctx, params: mcp_types.PaginatedRequestParams | None) -> dict:
+            return {"tools": [t.model_dump(mode="json") for t in self._tool_definitions()]}
+
+        async def on_call_tool(ctx, params: mcp_types.CallToolRequestParams) -> dict:
+            name = params.name
+            arguments: dict = dict(params.arguments) if params.arguments else {}
+            try:
+                text = self._dispatch(name, arguments)
+            except Exception as e:
+                return {
+                    "content": [{"type": "text", "text": f"Error: {e}"}],
+                    "is_error": True,
+                }
+            return {"content": [{"type": "text", "text": text}]}
+
+        app.add_request_handler("tools/list", mcp_types.PaginatedRequestParams, on_list_tools)
+        app.add_request_handler("tools/call", mcp_types.CallToolRequestParams, on_call_tool)
 
     def _handle_status(self) -> str:
         card = self._get_card()
@@ -388,5 +442,5 @@ def main() -> None:
     asyncio.run(server.run())
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — entrypoint guard
     main()

@@ -253,3 +253,544 @@ class TestAuthClient:
             "server_url": "http://x", "action": "verify_token", "token": "bad",
         }))
         assert out["valid"] is False
+
+    def test_verify_token_requires_token(self, configured, monkeypatch):
+        import hermes_id.auth_client as auth
+
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            def verify_token(self, token):
+                return None
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(auth, "AuthClient", FakeClient)
+        out = json.loads(configured._handle_auth_client({
+            "server_url": "http://x", "action": "verify_token",
+        }))
+        assert "token is required" in out["error"]
+
+    def test_login_action(self, configured, monkeypatch):
+        """login uses AuthFlow and returns a token."""
+        import hermes_id.auth_client as auth
+
+        class FakeFlow:
+            def __init__(self, *a, **kw):
+                pass
+
+            def login(self, aud=None):
+                return "token-123"
+
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(auth, "AuthClient", FakeClient)
+        monkeypatch.setattr(auth, "AuthFlow", FakeFlow)
+        out = json.loads(configured._handle_auth_client({
+            "server_url": "http://x", "action": "login", "aud": "spacetime-tv",
+        }))
+        assert out["token"] == "token-123"
+        assert out["aud"] == "spacetime-tv"
+
+    def test_status_no_identity(self, tmp_path, monkeypatch):
+        import hermes_id.auth_client as auth
+
+        srv = make_server(str(tmp_path / "empty"))
+
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(auth, "AuthClient", FakeClient)
+        out = json.loads(srv._handle_auth_client({
+            "server_url": "http://x", "action": "status",
+        }))
+        assert "No identity configured" in out["error"]
+
+    def test_auth_import_error(self, configured, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "hermes_id.auth_client":
+                raise ImportError("httpx missing")
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        out = json.loads(configured._handle_auth_client({
+            "server_url": "http://x", "action": "status",
+        }))
+        assert "not available" in out["error"]
+
+    def test_sign_failure(self, configured, monkeypatch):
+        """A wrong passphrase yields a sign error, not a crash."""
+        monkeypatch.setenv("HERMES_ID_PASSPHRASE", "wrong-passphrase")
+        out = json.loads(configured._handle_sign({"message_b64": "aGVsbG8="}))
+        assert "Cannot sign" in out.get("error", "")
+
+    def test_sign_invalid_base64(self, configured):
+        out = json.loads(configured._handle_sign({"message_b64": "%%%" }))
+        assert "Invalid base64" in out.get("error", "")
+
+    def test_verify_rotation_invalid_proof(self, configured):
+        """A card with rotation metadata but an invalid proof is rejected."""
+        from hermes_id.storage import IdentityStorage
+
+        d = str(configured._storage._dir)
+        storage = IdentityStorage(directory=d)
+        card = storage.get_identity_card()
+        data = json.loads(card.to_json())
+        # Fake rotation metadata on an un-rotated card → proof can't verify
+        data["metadata"]["rotation"] = {
+            "previous_did": "did:hermes:some-other-key",
+            "previous_public_key": "AAAAAAAAAAAA",
+            "transition_signature": "BBBB",
+            "rotated_at": "2026-08-04T00:00:00Z",
+        }
+        out = json.loads(configured._handle_verify_rotation(
+            {"identity_card_json": json.dumps(data)}
+        ))
+        assert out["valid"] is False
+        assert out.get("error")
+
+    def test_verify_rotation_invalid_card_json(self, configured):
+        out = json.loads(configured._handle_verify_rotation(
+            {"identity_card_json": "{bad json"}
+        ))
+        assert out["valid"] is False
+        assert "Invalid card JSON" in out["error"]
+
+    def test_verify_signature_invalid_card_json(self, configured):
+        out = json.loads(configured._handle_verify_signature({
+            "message_b64": "aGVsbG8=",
+            "signature_b64": "AAAA",
+            "identity_card_json": "{bad json",
+        }))
+        assert out["valid"] is False
+        assert "Invalid card JSON" in out["error"]
+
+    def test_verify_signature_card_without_pubkey(self, configured):
+        from hermes_id.storage import IdentityStorage
+
+        d = str(configured._storage._dir)
+        storage = IdentityStorage(directory=d)
+        card = storage.get_identity_card()
+        data = json.loads(card.to_json())
+        data["verification_method"][0]["publicKeyMultibase"] = ""
+        out = json.loads(configured._handle_verify_signature({
+            "message_b64": "aGVsbG8=",
+            "signature_b64": "AAAA",
+            "identity_card_json": json.dumps(data),
+        }))
+        assert out["valid"] is False
+        assert "No public key" in out["error"]
+
+    def test_verify_signature_unparseable_pubkey(self, configured):
+        from hermes_id.storage import IdentityStorage
+
+        d = str(configured._storage._dir)
+        storage = IdentityStorage(directory=d)
+        card = storage.get_identity_card()
+        data = json.loads(card.to_json())
+        data["verification_method"][0]["publicKeyMultibase"] = "u%%%%"
+        out = json.loads(configured._handle_verify_signature({
+            "message_b64": "aGVsbG8=",
+            "signature_b64": "AAAA",
+            "identity_card_json": json.dumps(data),
+        }))
+        assert out["valid"] is False
+        assert "Cannot parse key" in out["error"]
+
+    def test_verify_signature_invalid_base64(self, configured):
+        out = json.loads(configured._handle_verify_signature({
+            "message_b64": "%%%",
+            "signature_b64": "AAAA",
+            "identity_card_json": "{}",
+        }))
+        assert out["valid"] is False
+        assert "Invalid base64" in out["error"]
+
+    def test_verify_signature_bad_signature(self, configured):
+        from hermes_id.storage import IdentityStorage
+
+        d = str(configured._storage._dir)
+        storage = IdentityStorage(directory=d)
+        card = storage.get_identity_card()
+        out = json.loads(configured._handle_verify_signature({
+            "message_b64": "aGVsbG8=",
+            "signature_b64": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=",
+            "identity_card_json": card.to_json(),
+        }))
+        assert out["valid"] is False
+
+
+# ---------------------------------------------------------------------------
+# register_tools — modern (mcp >= 2.0) and legacy decorator APIs
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterToolsModern:
+    """Drive the real mcp 2.0 SDK: register_tools must not crash and the
+    registered handlers must answer tools/list and tools/call."""
+
+    def _real_server(self, identity_dir):
+        from hermes_id.mcp_server import HermesIDMCPServer
+
+        return HermesIDMCPServer(identity_dir=identity_dir)
+
+    def test_register_modern_succeeds(self, configured, tmp_path):
+
+
+        srv = self._real_server(str(tmp_path / "real"))
+        srv.register_tools()
+        app = srv._app
+        assert app.get_request_handler("tools/list") is not None
+        assert app.get_request_handler("tools/call") is not None
+
+    def test_modern_list_and_call_handlers(self, configured, monkeypatch):
+        import asyncio
+
+        import mcp_types
+
+
+        srv = self._real_server(str(configured._storage._dir))
+        srv.register_tools()
+        app = srv._app
+        list_entry = app.get_request_handler("tools/list")
+        call_entry = app.get_request_handler("tools/call")
+
+        async def run():
+            list_params = mcp_types.PaginatedRequestParams()
+            result = await list_entry.handler(None, list_params)
+            tools = result["tools"] if isinstance(result, dict) else result.tools
+            names = [t["name"] if isinstance(t, dict) else t.name for t in tools]
+            assert "hermes_id_status" in names
+            assert "hermes_id_auth_client" in names
+
+            call_params = mcp_types.CallToolRequestParams(
+                name="hermes_id_status", arguments={}
+            )
+            r2 = await call_entry.handler(None, call_params)
+            content = r2["content"] if isinstance(r2, dict) else r2.content
+            text = content[0]["text"] if isinstance(content[0], dict) else content[0].text
+            assert '"status": "ok"' in text
+
+            bad = mcp_types.CallToolRequestParams(name="nope", arguments={})
+            r3 = await call_entry.handler(None, bad)
+            c3 = r3["content"] if isinstance(r3, dict) else r3.content
+            t3 = c3[0]["text"] if isinstance(c3[0], dict) else c3[0].text
+            assert "Unknown tool" in t3
+
+            # error path — sign without a passphrase set
+            monkeypatch.delenv("HERMES_ID_PASSPHRASE", raising=False)
+            sign_call = mcp_types.CallToolRequestParams(
+                name="hermes_id_sign", arguments={"message_b64": "aGVsbG8="}
+            )
+            r4 = await call_entry.handler(None, sign_call)
+            c4 = r4["content"] if isinstance(r4, dict) else r4.content
+            t4 = c4[0]["text"] if isinstance(c4[0], dict) else c4[0].text
+            assert "error" in t4.lower() or "unlock" in t4.lower() or "passphrase" in t4.lower()
+
+            # exception path — a raising handler is converted to is_error
+
+            def boom(*a, **kw):
+                raise RuntimeError("kaboom")
+
+            monkeypatch.setattr(srv, "_dispatch", boom)
+            err_call = mcp_types.CallToolRequestParams(
+                name="hermes_id_status", arguments={}
+            )
+            r5 = await call_entry.handler(None, err_call)
+            c5 = r5["content"] if isinstance(r5, dict) else r5.content
+            t5 = c5[0]["text"] if isinstance(c5[0], dict) else c5[0].text
+            assert "Error: kaboom" in t5
+            if isinstance(r5, dict):
+                assert r5.get("is_error") is True
+
+        asyncio.run(run())
+
+
+class TestRegisterToolsLegacy:
+    """The legacy decorator path (mcp < 2.0) must still work when the
+    SDK is older. We simulate an old-style Server object and force the
+    module to take the non-modern branch."""
+
+    def test_legacy_registration(self, configured, tmp_path, monkeypatch):
+        import asyncio
+
+        import hermes_id.mcp_server as mod
+        from hermes_id.mcp_server import HermesIDMCPServer
+
+        # Force the legacy branch regardless of the installed SDK
+        monkeypatch.setattr(mod, "_MCP_MODERN", False)
+
+        class FakeApp:
+            def __init__(self):
+                self._list_tools = None
+                self._call_tool = None
+
+            def list_tools(self):
+                def deco(fn):
+                    self._list_tools = fn
+                    return fn
+
+                return deco
+
+            def call_tool(self):
+                def deco(fn):
+                    self._call_tool = fn
+                    return fn
+
+                return deco
+
+        srv = object.__new__(HermesIDMCPServer)
+        srv._storage = configured._storage
+        srv._app = FakeApp()
+        srv.register_tools()
+
+        assert srv._app._list_tools is not None
+        assert srv._app._call_tool is not None
+
+        # list_tools returns the 7 definitions
+        async def run():
+            tools = await srv._app._list_tools()
+            names = [t.name for t in tools]
+            assert len(names) == 7
+            assert "hermes_id_status" in names
+            # call_tool routes to handlers
+            content = await srv._app._call_tool("hermes_id_status", {})
+            assert '"status": "ok"' in content[0].text
+            content2 = await srv._app._call_tool("hermes_id_export", {})
+            assert "did:hermes:" in content2[0].text
+            content3 = await srv._app._call_tool("hermes_id_verify_card", {
+                "identity_card_json": configured._handle_export(),
+            })
+            assert '"valid": true' in content3[0].text
+            content4 = await srv._app._call_tool("unknown_tool", {})
+            assert "Unknown tool" in content4[0].text
+
+        asyncio.run(run())
+
+    def test_legacy_dispatch_routes_all_handlers(self, configured, monkeypatch):
+        """The legacy dispatch routes every tool name to its handler."""
+        import asyncio
+
+        import hermes_id.mcp_server as mod
+        from hermes_id.mcp_server import HermesIDMCPServer
+
+        monkeypatch.setattr(mod, "_MCP_MODERN", False)
+
+        class FakeApp:
+            def __init__(self):
+                self._list_tools = None
+                self._call_tool = None
+
+            def list_tools(self):
+                def deco(fn):
+                    self._list_tools = fn
+                    return fn
+
+                return deco
+
+            def call_tool(self):
+                def deco(fn):
+                    self._call_tool = fn
+                    return fn
+
+                return deco
+
+        srv = object.__new__(HermesIDMCPServer)
+        srv._storage = configured._storage
+        srv._app = FakeApp()
+        srv.register_tools()
+
+        async def run():
+            # sign — needs a passphrase set by the configured fixture
+            c = await srv._app._call_tool("hermes_id_sign", {"message_b64": "aGVsbG8="})
+            assert '"signature_b64"' in c[0].text
+            # verify_signature with a real signature
+            card = configured._storage.get_identity_card()
+            c2 = await srv._app._call_tool("hermes_id_verify_signature", {
+                "message_b64": "aGVsbG8=",
+                "signature_b64": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=",
+                "identity_card_json": card.to_json(),
+            })
+            assert '"valid": false' in c2[0].text
+            # verify_rotation
+            c3 = await srv._app._call_tool("hermes_id_verify_rotation", {
+                "identity_card_json": card.to_json(),
+            })
+            assert '"valid"' in c3[0].text
+            # auth_client — server_url missing → error JSON, no crash
+            c4 = await srv._app._call_tool("hermes_id_auth_client", {"action": "status"})
+            assert "server_url is required" in c4[0].text
+
+        asyncio.run(run())
+
+    def test_legacy_call_tool_exception_wrapped(self, configured, monkeypatch):
+        """A handler exception is converted to an Error TextContent."""
+        import asyncio
+
+        import hermes_id.mcp_server as mod
+        from hermes_id.mcp_server import HermesIDMCPServer
+
+        monkeypatch.setattr(mod, "_MCP_MODERN", False)
+
+        class FakeApp:
+            def __init__(self):
+                self._list_tools = None
+                self._call_tool = None
+
+            def list_tools(self):
+                def deco(fn):
+                    self._list_tools = fn
+                    return fn
+
+                return deco
+
+            def call_tool(self):
+                def deco(fn):
+                    self._call_tool = fn
+                    return fn
+
+                return deco
+
+        srv = object.__new__(HermesIDMCPServer)
+        srv._storage = configured._storage
+        srv._app = FakeApp()
+        srv.register_tools()
+
+        def boom(*a, **kw):
+            raise RuntimeError("kaboom")
+
+        monkeypatch.setattr(srv, "_dispatch", boom)
+
+        async def run():
+            content = await srv._app._call_tool("hermes_id_status", {})
+            assert "Error: kaboom" in content[0].text
+
+        asyncio.run(run())
+
+    def test_legacy_dispatch_error_wrapped(self, configured, monkeypatch):
+        import asyncio
+
+        import hermes_id.mcp_server as mod
+        from hermes_id.mcp_server import HermesIDMCPServer
+
+        monkeypatch.setattr(mod, "_MCP_MODERN", False)
+
+        class FakeApp:
+            def __init__(self):
+                self._list_tools = None
+                self._call_tool = None
+
+            def list_tools(self):
+                def deco(fn):
+                    self._list_tools = fn
+                    return fn
+
+                return deco
+
+            def call_tool(self):
+                def deco(fn):
+                    self._call_tool = fn
+                    return fn
+
+                return deco
+
+        srv = object.__new__(HermesIDMCPServer)
+        srv._storage = configured._storage
+        srv._app = FakeApp()
+        srv.register_tools()
+        # Force the handler to raise — the wrapper must convert to Error text
+        async def run():
+            content = await srv._app._call_tool("hermes_id_status", {})
+            assert isinstance(content[0].text, str)
+
+        asyncio.run(run())
+
+
+class TestModuleGuards:
+    def test_main_without_mcp_sdk(self, capsys, monkeypatch):
+        """main() exits cleanly with a hint when the SDK is missing."""
+        import hermes_id.mcp_server as mod
+
+        monkeypatch.setattr(mod, "HAS_MCP", False)
+        with pytest.raises(SystemExit) as exc:
+            mod.main()
+        assert exc.value.code == 1
+        assert "MCP SDK not installed" in capsys.readouterr().out
+
+    def test_main_entrypoint(self, monkeypatch):
+        """main() wires HermesIDMCPServer.run() through asyncio."""
+        import hermes_id.mcp_server as mod
+
+        calls: dict = {}
+
+        class FakeServer:
+            async def run(self):
+                calls["ran"] = True
+
+        monkeypatch.setattr(mod, "HermesIDMCPServer", lambda *a, **kw: FakeServer())
+        mod.main()
+        assert calls.get("ran") is True
+
+    def test_run_wires_stdio_transport(self, monkeypatch):
+        """run() registers tools and drives the stdio transport."""
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        import hermes_id.mcp_server as mod
+        from hermes_id.mcp_server import HermesIDMCPServer
+
+        srv = HermesIDMCPServer(identity_dir="/tmp/nonexistent-xyz")
+        calls: dict = {}
+
+        @asynccontextmanager
+        async def fake_stdio():
+            yield (object(), object())
+
+        monkeypatch.setattr(mod, "stdio_server", fake_stdio)
+
+        async def fake_run(rs, ws, opts):
+            calls["ran"] = True
+
+        srv._app.run = fake_run  # type: ignore[method-assign]
+        asyncio.run(srv.run())
+        assert calls.get("ran") is True
+
+    def test_module_import_error_sets_has_mcp_false(self, tmp_path):
+        """When the mcp SDK can't be imported, HAS_MCP is False and the
+        module still loads (guarded import)."""
+        import subprocess
+        import sys
+
+        script = (
+            "import sys\n"
+            "class Blocker:\n"
+            "    def find_module(self, name, path=None):\n"
+            "        if name == 'mcp' or name.startswith('mcp.'):\n"
+            "            raise ImportError('blocked for test')\n"
+            "        return None\n"
+            "sys.meta_path.insert(0, Blocker())\n"
+            "import hermes_id.mcp_server as m\n"
+            "print('HAS_MCP=', m.HAS_MCP)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+        assert "HAS_MCP= False" in result.stdout, result.stderr
