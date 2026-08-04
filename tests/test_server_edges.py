@@ -239,6 +239,67 @@ class TestChallengeStoreSweep:
         assert "did:hermes:onetime" not in server._challenges
 
 
+class TestInvalidationPrune:
+    def test_prune_removes_expired_rows(self, server, server_identity):
+        """Rows older than the token TTL are deleted — they're redundant
+        because _parse_token rejects expired tokens before the blacklist
+        check."""
+        server._invalidate_token("tok-expired-1", "did:hermes:a")
+        server._invalidate_token("tok-expired-2", "did:hermes:b")
+        # Age them past the TTL
+        import sqlite3 as _sqlite3
+
+        conn = _sqlite3.connect(str(server._invalidation_db_path))
+        conn.execute(
+            "UPDATE invalidated_tokens SET invalidated_at = ? "
+            "WHERE token_id IN ('tok-expired-1','tok-expired-2')",
+            (time.time() - server._token_ttl - 10.0,),
+        )
+        conn.commit()
+        conn.close()
+
+        server._prune_invalidated_tokens()
+
+        conn = _sqlite3.connect(str(server._invalidation_db_path))
+        remaining = conn.execute("SELECT COUNT(*) FROM invalidated_tokens").fetchone()[0]
+        conn.close()
+        assert remaining == 0
+
+    def test_prune_keeps_recent_rows(self, server, server_identity):
+        """Fresh invalidation rows survive the prune."""
+        server._invalidate_token("tok-fresh", "did:hermes:a")
+        server._invalidate_token("tok-fresh-2", "did:hermes:b")
+        server._prune_invalidated_tokens()
+
+        conn = __import__("sqlite3").connect(str(server._invalidation_db_path))
+        remaining = conn.execute("SELECT COUNT(*) FROM invalidated_tokens").fetchone()[0]
+        conn.close()
+        assert remaining == 2
+
+    def test_revoke_still_blocks_after_prune(self, server, client, agent_identity):
+        """A revoked (still-valid) token stays blocked even after a prune —
+        its row is fresh, so it survives."""
+        storage, card = _register_approved(server, client, agent_identity)
+        chal = _get_challenge(client, card.id)
+        sig = _sign_with(storage, chal)
+        r = client.post(
+            "/authenticate",
+            json={
+                "did": card.id,
+                "identity_card": card.to_json(),
+                "signature_b64": sig,
+                "challenge_b64": chal,
+            },
+        )
+        token = r.json()["token"]
+        rv = client.post("/token/revoke", json={"token": token})
+        assert rv.status_code == 200
+        server._prune_invalidated_tokens()  # fresh row survives
+        r = client.post("/verify", json={"token": token})
+        assert r.status_code == 200
+        assert r.json()["valid"] is False
+
+
 # ---------------------------------------------------------------------------
 # Keypair loading / admin key configuration
 # ---------------------------------------------------------------------------

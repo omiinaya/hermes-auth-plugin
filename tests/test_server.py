@@ -52,10 +52,20 @@ def auth_server(server_identity, tmp_path_factory):
         rate_limit_max=100,
     )
 
-    port = 9495
+    # Bind an ephemeral port (0) so concurrent test runs / leftover
+    # processes can never collide on a hardcoded port. The pre-bound
+    # socket is handed to uvicorn by fd — no race between discovery
+    # and bind.
+    import socket as _socket
+
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+
     import uvicorn
     t = threading.Thread(
-        target=lambda: uvicorn.run(server.app, host="127.0.0.1", port=port, log_level="error"),
+        target=lambda: uvicorn.run(server.app, host="127.0.0.1", port=port, log_level="error", fd=sock.fileno()),
         daemon=True,
     )
     t.start()

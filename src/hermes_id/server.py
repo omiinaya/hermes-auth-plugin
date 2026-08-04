@@ -306,6 +306,7 @@ class AuthServer:
         self._challenges: dict[str, dict[str, Any]] = {}
         self._rate_limiter = RateLimiter(max_requests=rate_limit_max, window_seconds=rate_limit_window)
         self._challenge_sweeps = 0
+        self._revoke_count = 0
 
         # Logging
         self._log = _logger
@@ -603,6 +604,28 @@ class AuthServer:
         finally:
             conn.close()
 
+    def _prune_invalidated_tokens(self) -> None:
+        """Delete invalidation rows whose token has certainly expired.
+
+        ``_parse_token`` rejects expired tokens before ever consulting the
+        blacklist, so an invalidation row older than the token TTL is
+        redundant. Pruning keeps the table bounded instead of growing
+        forever with every revoke. Called opportunistically (every 64th
+        revoke) to keep per-request work constant.
+        """
+        conn = self._invalidation_db_connect()
+        try:
+            cutoff = time.time() - self._token_ttl
+            cur = conn.execute(
+                "DELETE FROM invalidated_tokens WHERE invalidated_at < ?",
+                (cutoff,),
+            )
+            conn.commit()
+            if cur.rowcount > 0:
+                self._log.info("Pruned %d expired invalidation rows", cur.rowcount)
+        finally:
+            conn.close()
+
     def _generate_token_id(self) -> str:
         return secrets.token_urlsafe(16)
 
@@ -849,6 +872,12 @@ class AuthServer:
             if token_id:
                 self._invalidate_token(token_id, payload.get("did", ""))
                 self._log.info("Token revoked: token_id=%s did=%s", token_id, payload.get("did"))
+
+            # Opportunistically prune rows whose tokens have certainly
+            # expired — keeps the blacklist table bounded.
+            self._revoke_count += 1
+            if self._revoke_count % 64 == 0:
+                self._prune_invalidated_tokens()
 
             return {"status": "revoked"}
 
