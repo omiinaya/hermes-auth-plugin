@@ -129,6 +129,49 @@ class TestRateLimiter:
         assert rl.check("a") is True
         assert rl.check("b") is True  # different IP unaffected
 
+    def test_empty_bucket_removed_from_table(self):
+        """Once an IP's bucket ages out of the window, the sweep removes its
+        dict entry so the table can't grow unboundedly from one-off IPs."""
+        rl = RateLimiter(max_requests=2, window_seconds=10.0)
+        rl._buckets["stale"] = [time.time() - 20.0]
+        assert rl.check("stale") is True        # stale pruned, one fresh entry
+        assert "stale" in rl._buckets            # still present mid-window
+        # Age it out entirely, then sweep — the entry must disappear.
+        rl._buckets["stale"] = [time.time() - 20.0]
+        rl._sweep(time.time() - 10.0)
+        assert "stale" not in rl._buckets
+
+    def test_denied_requests_keep_bucket(self):
+        """A denied request must NOT reset the counter — otherwise the
+        rate limiter is trivially bypassed by spamming past the limit."""
+        rl = RateLimiter(max_requests=1, window_seconds=60.0)
+        assert rl.check("ip") is True
+        assert rl.check("ip") is False          # denied
+        assert rl.check("ip") is False          # still denied — bucket kept
+
+    def test_sweep_preserves_active_buckets(self):
+        """Sweeping must not evict buckets with fresh timestamps."""
+        rl = RateLimiter(max_requests=5, window_seconds=60.0)
+        rl.check("active")
+        rl._sweep(time.time() - 30.0)            # cutoff 30s ago — active is fresh
+        assert "active" in rl._buckets
+
+    def test_burst_trims_bucket_to_max(self):
+        """A pathological burst keeps the bucket bounded to ~max*4 entries
+        instead of growing without limit."""
+        rl = RateLimiter(max_requests=2, window_seconds=60.0)
+        for _ in range(200):
+            rl.check("flood")
+        assert len(rl._buckets["flood"]) <= 2 * 4  # trimmed to ~max*4
+
+    def test_bucket_history_bounded_under_ongoing_burst(self):
+        """Even with an active flood the stored timestamps don't accumulate
+        past the trim ceiling (memory stays flat)."""
+        rl = RateLimiter(max_requests=5, window_seconds=60.0)
+        for _ in range(1000):
+            rl.check("attacker")
+        assert len(rl._buckets["attacker"]) <= 5 * 4
+
 
 class TestRateLimitEndpoint:
     def test_429_when_exceeded(self, server, server_identity):

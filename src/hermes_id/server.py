@@ -194,6 +194,7 @@ class RateLimiter:
         self._max = max_requests
         self._window = window_seconds
         self._buckets: dict[str, list[float]] = defaultdict(list)
+        self._sweep_counter = 0
 
     def check(self, client_ip: str) -> bool:
         now = time.time()
@@ -203,7 +204,28 @@ class RateLimiter:
         while bucket and bucket[0] < cutoff:
             bucket.pop(0)
         bucket.append(now)
-        return len(bucket) <= self._max
+        allowed = len(bucket) <= self._max
+        if not allowed and len(bucket) > self._max * 4:
+            # Pathological burst — trim to the most recent max entries so
+            # memory stays flat even under an active flood (bounded by
+            # ~max*4 + the window's natural churn).
+            del bucket[: len(bucket) - self._max]
+        # Opportunistic sweep: every 64 checks, drop buckets that have gone
+        # fully stale so a stream of one-off client IPs can't grow the table
+        # without limit. Denied requests keep their bucket (rate limit stays
+        # effective); only fully-aged-out entries are evicted.
+        self._sweep_counter += 1
+        if self._sweep_counter % 64 == 0:
+            self._sweep(cutoff)
+        return allowed
+
+    def _sweep(self, cutoff: float) -> None:
+        """Drop buckets whose every timestamp predates ``cutoff``."""
+        for ip, bucket in list(self._buckets.items()):
+            while bucket and bucket[0] < cutoff:
+                bucket.pop(0)
+            if not bucket:
+                del self._buckets[ip]
 
     def reset(self, client_ip: str) -> None:
         self._buckets.pop(client_ip, None)
