@@ -2,6 +2,15 @@
 
 ## 1.4.3 — 2026-08-04
 
+### Fixed — rate-limited /verify, /token/refresh, /token/revoke
+
+`/challenge`, `/authenticate` and `/agents/register` were rate-limited,
+but the three token endpoints had no limiter: an unthrottled attacker
+could burn CPU on `/verify` (signature check per call), mint tokens via
+`/token/refresh` (verifies AND signs per call), or hammer `/token/revoke`
+into DB writes. All three now call the shared rate limiter. Legitimate
+callers unaffected — the SDK `RevocationChecker` caches per token_id.
+
 ### Deployed — RevocationChecker cache fix to all live installs
 
 Rebuilt and redeployed to user-site (PROD), gateway venv, and gateway
