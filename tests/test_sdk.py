@@ -435,6 +435,89 @@ class TestHermesIDAuth:
         assert auth.check_token("garbage") is None
 
 
+class TestHermesIDAuthEnvVerify:
+    """HERMES_AUTH_VERIFY env parsing in the FastAPI middleware."""
+
+    def _captured_verify(self, monkeypatch):
+        import hermes_id.fastapi_middleware as fm
+
+        captured: dict = {}
+
+        class FakeRevocationChecker:
+            def __init__(self, *a, **kw):
+                captured["verify"] = kw.get("verify")
+
+            def is_revoked(self, token, token_id):
+                return False
+
+        monkeypatch.setattr(fm, "RevocationChecker", FakeRevocationChecker)
+        return captured
+
+    def test_verify_env_false(self, monkeypatch, tmp_path):
+        from hermes_id.fastapi_middleware import HermesIDAuth
+
+        captured = self._captured_verify(monkeypatch)
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", "false")
+        HermesIDAuth(
+            server_url="http://127.0.0.1:1", project="spacetime-test",
+            cache_dir=str(tmp_path),
+        )
+        assert captured["verify"] is False
+
+    def test_verify_env_true(self, monkeypatch, tmp_path):
+        from hermes_id.fastapi_middleware import HermesIDAuth
+
+        captured = self._captured_verify(monkeypatch)
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", "yes")
+        HermesIDAuth(
+            server_url="http://127.0.0.1:1", project="spacetime-test",
+            cache_dir=str(tmp_path),
+        )
+        assert captured["verify"] is True
+
+    def test_verify_env_ca_path(self, monkeypatch, tmp_path):
+        from hermes_id.fastapi_middleware import HermesIDAuth
+
+        captured = self._captured_verify(monkeypatch)
+        ca = tmp_path / "ca.pem"
+        ca.write_text("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----")
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", str(ca))
+        HermesIDAuth(
+            server_url="http://127.0.0.1:1", project="spacetime-test",
+            cache_dir=str(tmp_path),
+        )
+        assert captured["verify"] == str(ca)
+
+    def test_verify_no_env_defaults_true(self, monkeypatch, tmp_path):
+        from hermes_id.fastapi_middleware import HermesIDAuth
+
+        captured = self._captured_verify(monkeypatch)
+        monkeypatch.delenv("HERMES_AUTH_VERIFY", raising=False)
+        HermesIDAuth(
+            server_url="http://127.0.0.1:1", project="spacetime-test",
+            cache_dir=str(tmp_path),
+        )
+        assert captured["verify"] is True
+
+
+class TestHermesIDAuthRevokedPath:
+    def test_revoked_token_raises_autherror(self, server_url, token, auth_cache_dir, monkeypatch):
+        """A token reported revoked by the checker → AuthError('revoked')."""
+        import hermes_id.sdk as sdk
+        from hermes_id.fastapi_middleware import HermesIDAuth
+
+        auth = HermesIDAuth(server_url=server_url, project="spacetime-test", cache_dir=str(auth_cache_dir))
+
+        class FakeRevoked:
+            def is_revoked(self, token, token_id):
+                return True
+
+        monkeypatch.setattr(auth, "_revocation", FakeRevoked())
+        with pytest.raises(sdk.AuthError) as exc:
+            auth.verify_token(token)
+        assert exc.value.reason == "revoked"
+
+
 # ---------------------------------------------------------------------------
 # fastapi_plugin — drop-in agent-auth router
 # ---------------------------------------------------------------------------
@@ -516,6 +599,32 @@ class TestFastAPIPlugin:
             "/hermes-id/agent/me", headers={"Authorization": f"Bearer {token}"}
         )
         assert resp.status_code == 200
+
+    def test_status_graceful_when_card_load_fails(self, tmp_path, monkeypatch):
+        """agent_status stays 200 and reports server_card_cached=False when
+        the server card can't be loaded."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from hermes_id.fastapi_plugin import build_agent_router
+
+        class BoomAuth:
+            _server_url = "http://127.0.0.1:1"
+            _project = "spacetime-test"
+
+            def get_server_card(self):
+                raise RuntimeError("server unreachable")
+
+            def verify(self, authorization=None):
+                raise RuntimeError("not reached")
+
+        app = FastAPI()
+        app.include_router(build_agent_router(BoomAuth()), prefix="/hermes-id")
+        resp = TestClient(app).get("/hermes-id/agent/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["server_card_cached"] is False
+        assert body["server_did"] == ""
 
 
 # ---------------------------------------------------------------------------
