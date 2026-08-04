@@ -651,7 +651,7 @@ class AuthServer:
             conn = self._db_connect()
             try:
                 row = conn.execute(
-                    "SELECT status FROM agents WHERE did = ?", (req.did,)
+                    "SELECT status, projects FROM agents WHERE did = ?", (req.did,)
                 ).fetchone()
             finally:
                 conn.close()
@@ -665,6 +665,18 @@ class AuthServer:
                 raise HTTPException(
                     403,
                     f"Agent status is '{row[0]}'. Admin must approve first.",
+                )
+
+            # 6.5 Audience scoping — the requested aud must be within the
+            # agent's APPROVED projects. Otherwise an agent approved for one
+            # project could mint tokens scoped for any other project,
+            # defeating the per-project approval workflow.
+            approved_projects = json.loads(row[1]) if row[1] else []
+            if req.aud and approved_projects and req.aud not in approved_projects:
+                raise HTTPException(
+                    403,
+                    f"Agent is not approved for project '{req.aud}'. "
+                    f"Approved projects: {', '.join(approved_projects)}",
                 )
 
             # 7. Verify challenge signature

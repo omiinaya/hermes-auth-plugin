@@ -112,11 +112,19 @@ def _b64(data: bytes) -> str:
 
 
 def _unb64(s: str) -> bytes:
-    """Decode URL-safe base64 (may have padding stripped)."""
+    """Decode URL-safe base64 (may have padding stripped).
+
+    Raises ``binascii.Error`` on malformed input (``validate=True``) —
+    a crypto library must fail loudly on garbage rather than silently
+    decoding it to empty bytes (Python's default lenient mode drops
+    non-alphabet characters).
+    """
     pad = 4 - (len(s) % 4)
     if pad != 4:
         s += "=" * pad
-    return base64.urlsafe_b64decode(s)
+    # b64decode(validate=True) is the strict form; urlsafe_b64decode has no
+    # validate param (lenient by default, silently drops non-alphabet chars).
+    return base64.b64decode(s, altchars=b"-_", validate=True)
 
 
 def _multibase_encode(data: bytes) -> str:

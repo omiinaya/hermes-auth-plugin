@@ -441,3 +441,64 @@ class TestTLSSupport:
                 httpx.get(f"http://127.0.0.1:{port}/identity", timeout=3)
         finally:
             t.join(timeout=2)
+
+
+# ---------------------------------------------------------------------------
+# Audience scoping enforcement — regression: an agent approved ONLY for
+# project X must NOT be able to mint tokens scoped for project Y via
+# /authenticate. (Security fix: previously the aud was taken from the
+# request unchecked, defeating per-project approval.)
+# ---------------------------------------------------------------------------
+
+class TestAudienceScoping:
+    def test_agent_cannot_mint_token_for_unapproved_project(
+        self, server_url, admin_client, tmp_path_factory
+    ):
+        from hermes_id.auth_client import AuthClient, AuthFlow
+
+        # Fresh agent registered + approved ONLY for spacetime-tv
+        scoped_dir = str(tmp_path_factory.mktemp("scoped-agent"))
+        storage = IdentityStorage(directory=scoped_dir)
+        storage.create(_TEST_PASSWORD, metadata={"profile": "scoped-agent"})
+        card = storage.get_identity_card()
+
+        agent = AuthClient(server_url, identity_dir=scoped_dir)
+        with contextlib.suppress(httpx.HTTPStatusError):
+            agent.register_agent(
+                card.id, display_name="Scoped Agent", projects=["spacetime-tv"]
+            )
+        admin_client.approve_agent(card.id, project="spacetime-tv")
+
+        flow = AuthFlow(server_url, identity_dir=scoped_dir)
+
+        # Correct aud → token issued, scoped to the approved project
+        token, result = flow.login(aud="spacetime-tv")
+        assert result["aud"] == "spacetime-tv"
+        assert token
+
+        # Unapproved aud → 403 (the security fix)
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            flow.login(aud="spacetime-air")
+        assert exc.value.response.status_code == 403
+
+        # Unscoped token (aud="") still allowed — no audience escalation
+        _, result2 = flow.login(aud=None)
+        assert result2["aud"] == ""
+
+    def test_global_agent_can_request_any_aud(self, server_url, admin_client, tmp_path_factory):
+        from hermes_id.auth_client import AuthClient, AuthFlow
+
+        # Agent with NO projects is a global agent — any aud is permitted
+        scoped_dir = str(tmp_path_factory.mktemp("global-agent"))
+        storage = IdentityStorage(directory=scoped_dir)
+        storage.create(_TEST_PASSWORD, metadata={"profile": "global-agent"})
+        card = storage.get_identity_card()
+
+        agent = AuthClient(server_url, identity_dir=scoped_dir)
+        with contextlib.suppress(httpx.HTTPStatusError):
+            agent.register_agent(card.id, display_name="Global Agent")
+        admin_client.approve_agent(card.id)
+
+        flow = AuthFlow(server_url, identity_dir=scoped_dir)
+        _, result = flow.login(aud="spacetime-air")
+        assert result["aud"] == "spacetime-air"

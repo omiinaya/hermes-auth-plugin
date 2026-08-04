@@ -11,6 +11,36 @@ high-security file-encryption tier, not an interactive-login tier).
 `hermes-id init` took ~18s; each unlock ~10s; the test suite effectively
 hung (194 tests × repeated derivations).
 
+### Security fix — `/authenticate` audience scoping (P0)
+
+An agent approved ONLY for project X could previously mint tokens scoped
+for **any** project Y by passing `aud=Y` to `/authenticate` — the request
+audience was never checked against the agent's approved `projects` list,
+defeating the per-project approval workflow. Now `/authenticate` rejects
+with 403 any non-empty `aud` outside the agent's approved projects
+(global agents with no projects are unaffected; unscoped tokens still
+allowed). Regression tests: `TestAudienceScoping` (unapproved-aud 403,
+approved-aud success, unscoped allowed, global-agent any-aud).
+
+### Fixed — `_unb64` was lenient (silently decoded garbage to empty bytes)
+
+Python's `urlsafe_b64decode` drops non-alphabet characters by default, so
+`_unb64("%%%")` returned `b""` instead of raising — malformed signatures/
+messages were accepted as empty instead of failing loudly. `_unb64` now
+uses `b64decode(altchars=b"-_", validate=True)` (the strict form).
+
+### Tests — CLI / admin CLI / MCP surfaces went 0% → covered
+
+- `tests/test_cli.py` (+30) — init/show/export/status/verify/sign/
+  verify-sig/rotate flows, error paths, force-overwrite, transition-proof
+  rotation with backup, dispatcher ImportError paths. Uses a fast-KDF
+  fixture (pbkdf2) so the suite stays fast.
+- `tests/test_admin_cli.py` (+10) — all five subcommands via a fake
+  AuthClient, env/admin-key precedence, error path, close-on-exit.
+- `tests/test_mcp_server.py` (+18) — status/export/verify_card/sign/
+  verify_signature/verify_rotation handlers + auth_client actions with
+  fake clients.
+
 ### Changed — v3 blob format (self-describing KDF + parameters)
 
 - **New blob format `HID3`**: `magic(4) + kdf_id(1) + params(12) + salt(16)
