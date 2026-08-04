@@ -18,6 +18,7 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -546,3 +547,147 @@ class TestTokenCache:
     def test_requires_project(self):
         with pytest.raises(ValueError):
             TokenCache("")
+
+
+# ---------------------------------------------------------------------------
+# Edge-case coverage — malformed cards, env TLS parsing, cache failures,
+# TokenCache failure modes (the defensive paths).
+# ---------------------------------------------------------------------------
+
+class TestVerifyTokenOfflineMalformedInputs:
+    def test_invalid_json_string_card_rejected(self, token):
+        assert verify_token_offline(token, "definitely not a card") is None
+
+    def test_invalid_dict_card_rejected(self, token):
+        assert verify_token_offline(token, {"not": "a card"}) is None
+
+    def test_unparseable_payload_rejected(self, server_identity):
+        """A token whose payload base64-decodes but isn't JSON → None."""
+        from hermes_id.crypto import _b64, sign
+        from hermes_id.storage import IdentityStorage
+
+        storage = IdentityStorage(directory=server_identity)
+        private = storage.unlock(_TEST_PASSWORD)
+        raw_payload = b"this is not json"
+        payload_b64 = _b64(raw_payload)
+        sig = sign(private, raw_payload)
+        token = f"{payload_b64}.{_b64(sig)}"
+
+        card = storage.get_identity_card()
+        assert verify_token_offline(token, card.to_json()) is None
+
+    def test_card_with_bad_public_key_rejected(self, token, server_card):
+        bad = dict(server_card)
+        bad["verificationMethod"] = [{
+            "id": "x", "type": "Ed25519VerificationKey2020",
+            "controller": bad["id"],
+            "publicKeyMultibase": "uzzz",  # garbage multibase
+        }]
+        assert verify_token_offline(token, bad) is None
+
+
+class TestLoadServerCardEdgeCases:
+    def test_corrupt_cache_ignored_when_server_up(self, server_url, tmp_path):
+        cache = tmp_path / "card.json"
+        cache.write_text("{{{corrupt json")
+        card = load_server_card(server_url, cache_path=cache)
+        assert card["id"].startswith("did:hermes:")
+
+    def test_env_verify_false_disables_tls(self, server_url, tmp_path, monkeypatch):
+
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", "false")
+        captured: dict = {}
+        real_get = httpx.get
+
+        def fake_get(url, **kwargs):
+            captured["verify"] = kwargs.get("verify")
+            return real_get(url, **kwargs)
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+        load_server_card(server_url, cache_path=tmp_path / "c.json")
+        assert captured["verify"] is False
+
+    def test_env_verify_0_disables_tls(self, server_url, tmp_path, monkeypatch):
+
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", "0")
+        captured: dict = {}
+        real_get = httpx.get
+
+        def fake_get(url, **kwargs):
+            captured["verify"] = kwargs.get("verify")
+            return real_get(url, **kwargs)
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+        load_server_card(server_url, cache_path=tmp_path / "c.json")
+        assert captured["verify"] is False
+
+    def test_env_verify_path_used_as_ca_bundle(self, server_url, server_card, tmp_path, monkeypatch):
+
+        ca_path = "/opt/example/ca.pem"
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", ca_path)
+        captured: dict = {}
+
+        class FakeResp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return server_card
+
+        def fake_get(url, **kwargs):
+            captured["verify"] = kwargs.get("verify")
+            return FakeResp()
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+        load_server_card(server_url, cache_path=tmp_path / "c.json")
+        assert captured["verify"] == ca_path
+
+    def test_card_failing_self_signature_raises(self, server_card, tmp_path, monkeypatch):
+
+        bad = dict(server_card)
+        bad["proof"]["signatureValue"] = bad["proof"]["signatureValue"][:-4] + "AAAA"
+
+        class FakeResp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return bad
+
+        monkeypatch.setattr(httpx, "get", lambda url, **kw: FakeResp())
+        with pytest.raises(AuthError):
+            load_server_card("http://x", cache_path=tmp_path / "c.json", allow_stale=False)
+
+    def test_cache_write_failure_is_best_effort(self, server_url, tmp_path, monkeypatch):
+        def boom(*a, **kw):
+            raise OSError("read-only filesystem")
+
+        monkeypatch.setattr(Path, "write_text", boom)
+        card = load_server_card(server_url, cache_path=tmp_path / "card.json")
+        assert card["id"].startswith("did:hermes:")
+
+
+class TestTokenCacheFailureModes:
+    def test_get_empty_token_returns_none(self, tmp_path):
+        d = tmp_path / "tokens"
+        d.mkdir()
+        (d / "proj.json").write_text('{"token": "", "payload": {}}')
+        assert TokenCache("proj", directory=str(d)).get() is None
+
+    def test_get_corrupt_file_returns_none(self, tmp_path):
+        d = tmp_path / "tokens"
+        d.mkdir()
+        (d / "proj.json").write_text("not json at all")
+        assert TokenCache("proj", directory=str(d)).get() is None
+
+    def test_put_oserror_suppressed(self, tmp_path, monkeypatch):
+        def boom(*a, **kw):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(Path, "write_text", boom)
+        tc = TokenCache("proj", directory=str(tmp_path / "tokens"))
+        tc.put("tok", {"did": "x"})  # must not raise
+
+    def test_clear_missing_file_no_raise(self, tmp_path):
+        tc = TokenCache("proj", directory=str(tmp_path / "tokens"))
+        tc.clear()  # must not raise
