@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.4.2 — 2026-08-04
+
+### Fixed — three unbounded-growth availability bugs (DoS)
+
+Security/availability hardening for the long-running auth server, each
+with tests:
+
+1. **RateLimiter** retained a dict entry per unique client IP forever —
+   a stream of one-off IPs (or a rotating-IP attacker) grew the table
+   without limit. An opportunistic sweep now evicts aged-out buckets,
+   and pathological bursts trim to the most recent max entries.
+2. **Challenge store** retained a per-DID entry that was only removed on
+   `/authenticate` — DIDs that never completed the flow (or DIDs spammed
+   via `/challenge`) left entries forever. Expired nonces are now swept
+   every 64 issuances.
+3. **Invalidation table** (`invalidated_tokens`) grew on every revoke
+   with nothing ever deleting — rows older than the token TTL are now
+   pruned opportunistically (safe because expired tokens are rejected
+   before the blacklist is consulted).
+
+### Tests — server fixture binds an ephemeral port
+
+`tests/test_server.py` hardcoded port 9495, so a concurrent run or a
+leftover process collided with EADDRINUSE and the whole server test
+file failed. The fixture now binds port 0 and hands the pre-bound socket
+to uvicorn by fd — no race, no fixed port.
+
 ## 1.4.1 — 2026-08-04
 
 ### Deployed — live environments now run the MCP 2.0 + version-reporting fixes

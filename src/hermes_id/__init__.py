@@ -18,7 +18,7 @@ The protocol provides replay-proof, forward-compatible authentication
 without any central registry or PKI.
 """
 
-__version__ = "1.4.1"
+__version__ = "1.4.2"
 
 from hermes_id.crypto import (
     decrypt_key,
