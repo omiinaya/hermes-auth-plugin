@@ -32,6 +32,14 @@ fell back to its OWN version in `serverInfo` on `initialize` (clients
 saw `1.23.3` — the SDK's version — instead of hermes-id's). The real
 hermes-id `__version__` is now passed to the Server constructor.
 
+### Fixed — RateLimiter unbounded memory growth (DoS)
+
+The per-IP sliding-window limiter stored a dict entry per unique client
+IP and never removed them, so a stream of one-off IPs grew the table
+without limit. An opportunistic sweep now evicts aged-out buckets every
+64 checks and pathological bursts trim to the most recent max entries.
+
+
 ### Tests — modern-SDK MCP tests skip cleanly on mcp < 2.0
 
 `TestRegisterToolsModern` hard-required the mcp 2.0 `Server` API
