@@ -19,6 +19,12 @@ on:
 permissions:
   id-token: write   # required for trusted publishing
 
+# Only one publish at a time — two tags pushed in quick succession must
+# not race on PyPI. Newer runs cancel in-flight ones.
+concurrency:
+  group: publish
+  cancel-in-progress: true
+
 jobs:
   publish:
     runs-on: [self-hosted, ubuntu-latest]
