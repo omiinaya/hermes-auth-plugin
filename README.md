@@ -234,6 +234,9 @@ export HERMES_ID_PASSPHRASE="your-passphrase"
 # Start the auth server
 hermes-id server --port 9488
 
+# Tune rate limiting (defaults: 30 req / 60 s per IP)
+hermes-id server --port 9488 --rate-limit-max 100 --rate-limit-window 60
+
 # Serve over HTTPS (recommended for anything beyond localhost)
 hermes-id server --port 9488 --tls-cert /etc/ssl/hermes-id.crt --tls-key /etc/ssl/hermes-id.key
 ```
