@@ -1,7 +1,7 @@
 ---
 name: hermes-id
 description: "Self-Sovereign Identity for Hermes Agent — Ed25519-based decentralized identity, verifiable credential cards, and a mutual authentication handshake protocol. Every instance gets a unique DID, a signed identity card, and can prove ownership via challenge-response."
-version: 1.0.0
+version: 1.5.0
 ---
 
 # hermes-id Skill
