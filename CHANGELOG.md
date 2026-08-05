@@ -83,6 +83,25 @@ gitignored — the artifact step silently uploaded nothing. The Test step
 now copies the data to a non-ignored `coverage-<python>.data` name and
 the upload path includes both.
 
+### Fixed — `verify-sig` crashed on leading-`-` signatures (real bug)
+
+A base64url signature can legitimately start with `-` (the alphabet
+includes `-` and `_`). argparse treats a leading-dash positional as an
+option flag and exited with `SystemExit(2)` — so `hermes-id verify-sig
+<file> <sig>` failed whenever a signature happened to start with `-`.
+Caught by CI (a randomly-generated signature tripped it, while local
+runs had passed by luck).
+
+Fixed three ways:
+- New `--signature <sig>` flag (and `--signature=<sig>` equals form) —
+  the always-unambiguous way to pass a signature.
+- `main()` now pre-rewrites verify-sig argv: a positional signature
+  starting with `-` is moved into `--signature=<sig>`; a separate-arg
+  `--signature <dash-value>` is merged to equals-form.
+- Regression test `test_verify_sig_leading_dash_signature` deterministically
+  finds a valid signature that starts with `-` and asserts both forms work;
+  `_rewrite_verify_sig_argv` gets direct unit coverage for every branch.
+
 ## 1.4.4 — 2026-08-04
 
 ### Deployed — token-endpoint rate limiting to the live auth host

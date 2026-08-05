@@ -93,7 +93,12 @@ def main(argv: list[str] | None = None) -> int:
     # verify-sig
     vs_p = sub.add_parser("verify-sig", parents=[parent], help="Verify a signature against an identity card")
     vs_p.add_argument("file", help="Original file")
-    vs_p.add_argument("signature", help="Signature file or base64 string")
+    vs_p.add_argument("signature", nargs="?", help="Signature file or base64 string")
+    vs_p.add_argument("--signature", dest="signature_opt",
+                      help="Signature as base64 string (use this instead of the "
+                           "positional when the signature starts with '-' — the "
+                           "base64url alphabet includes '-' and '_', which argparse "
+                           "would otherwise mistake for an option flag)")
     vs_p.add_argument("--identity", help="Identity card JSON file (required)")
 
     # handshake
@@ -142,8 +147,81 @@ def main(argv: list[str] | None = None) -> int:
         help="Start the MCP stdio server for agent-to-agent auth tools",
     )
 
+    argv = _normalize_verify_sig_argv(argv)
     args = parser.parse_args(argv)
     return _dispatch(args)
+
+
+def _normalize_verify_sig_argv(argv: list[str] | None) -> list[str] | None:
+    """Rewrite ``verify-sig <file> <sig>`` when ``<sig>`` starts with '-'.
+
+    The base64url alphabet includes '-' and '_', so a valid signature can
+    begin with a dash. argparse treats a leading-dash positional as an
+    option flag and fails with SystemExit(2). Rewriting the positional to
+    the explicit ``--signature=<value>`` (equals) form makes the intent
+    unambiguous, so ``hermes-id verify-sig msg -abc... --identity card``
+    just works.
+    """
+    if not argv:
+        return argv
+    if len(argv) < 2 or argv[0] != "verify-sig":
+        return argv
+    return _rewrite_verify_sig_argv(argv)
+
+
+def _rewrite_verify_sig_argv(argv: list[str]) -> list[str]:
+    """Normalize verify-sig argv so a leading-dash signature is never
+    mistaken for an option flag.
+
+    Two cases:
+    - ``verify-sig <file> <sig>`` positional: rewrite to
+      ``verify-sig <file> --signature=<sig>``.
+    - ``verify-sig <file> --signature <sig>`` separate-arg option: rewrite
+      to the equals-form ``--signature=<sig>`` (argparse treats a
+      leading-dash value after ``--signature`` as another option).
+    """
+    positional: list[str] = []
+    options: list[str] = []
+    i = 1  # skip the subcommand
+    seen_file = False
+    while i < len(argv):
+        tok = argv[i]
+        if tok in ("--dir", "--identity"):
+            options.extend([tok, argv[i + 1]])
+            i += 2
+        elif tok == "--signature":
+            # Separate-arg form; if the value starts with '-', merge into
+            # equals-form so argparse consumes it as the option's value.
+            val = argv[i + 1]
+            if val.startswith("-"):
+                options.append(f"--signature={val}")
+            else:
+                options.extend([tok, val])
+            i += 2
+        elif tok.startswith("--signature="):
+            options.append(tok)
+            i += 1
+        elif tok.startswith("-") and not seen_file:
+            # Before the file positional, a dash token is an option.
+            options.append(tok)
+            i += 1
+        else:
+            # Positional: file first, then signature (a signature MAY start
+            # with '-' — once we've seen the file, treat the next token as
+            # the signature positional even if it looks like an option).
+            positional.append(tok)
+            seen_file = True
+            i += 1
+
+    # A leading-dash value after `--signature` was already merged above;
+    # if the caller used the positional form with a leading-dash sig, move
+    # it into the option form too.
+    if len(positional) >= 2 and positional[1].startswith("-"):
+        file_ = positional[0]
+        sig = positional[1]
+        return ["verify-sig", file_, *options, f"--signature={sig}"]
+
+    return ["verify-sig", *positional, *options]
 
 
 def _dispatch(args: argparse.Namespace) -> int:
@@ -412,8 +490,12 @@ def _cmd_verify_sig(args: argparse.Namespace) -> int:
         print(f"❌ Cannot read identity card: {e}", file=sys.stderr)
         return 1
 
-    # Read signature (parameter can be base64 string or file path)
-    sig_param = args.signature
+    # Read signature (--signature flag wins; positional accepts a base64
+    # string or a file path)
+    sig_param = args.signature_opt or args.signature
+    if not sig_param:
+        print("❌ Signature required: pass it positionally or via --signature.", file=sys.stderr)
+        return 1
     sig_b64 = (
         Path(sig_param).read_text().strip()
         if Path(sig_param).exists()

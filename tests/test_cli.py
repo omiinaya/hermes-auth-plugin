@@ -48,6 +48,78 @@ class TestDispatch:
         out = capsys.readouterr().out
         assert hermes_id_version in out
 
+    def test_rewrite_verify_sig_argv_nonverify_noop(self):
+        """Non-verify-sig commands pass through untouched."""
+        import hermes_id.cli as cli
+
+        assert cli._normalize_verify_sig_argv(["sign", "a", "-b"]) == ["sign", "a", "-b"]
+        assert cli._normalize_verify_sig_argv(None) is None
+        assert cli._normalize_verify_sig_argv([]) == []
+
+    def test_rewrite_verify_sig_argv_positional_dash(self):
+        """A positional signature starting with '-' is moved into equals-form."""
+        import hermes_id.cli as cli
+
+        out = cli._normalize_verify_sig_argv(
+            ["verify-sig", "msg.txt", "-abc123", "--identity", "card.json"]
+        )
+        assert out[0] == "verify-sig"
+        assert out[1] == "msg.txt"
+        assert "--identity" in out and "card.json" in out
+        assert "--signature=-abc123" in out
+
+    def test_rewrite_verify_sig_argv_positional_normal_noop(self):
+        """A positional signature not starting with '-' is unchanged (just
+        reordered stably)."""
+        import hermes_id.cli as cli
+
+        out = cli._normalize_verify_sig_argv(
+            ["verify-sig", "msg.txt", "abc123", "--identity", "card.json"]
+        )
+        assert out == ["verify-sig", "msg.txt", "abc123", "--identity", "card.json"]
+
+    def test_rewrite_verify_sig_argv_option_dash_merged(self):
+        """A separate-arg --signature whose value starts with '-' is merged to
+        equals-form."""
+        import hermes_id.cli as cli
+
+        out = cli._normalize_verify_sig_argv(
+            ["verify-sig", "msg.txt", "--signature", "-abc123", "--identity", "card.json"]
+        )
+        assert "--signature=-abc123" in out
+        assert "--signature" not in out or "-abc123" not in out
+
+    def test_rewrite_verify_sig_argv_option_normal_kept(self):
+        """A separate-arg --signature with a non-dash value stays as-is."""
+        import hermes_id.cli as cli
+
+        out = cli._normalize_verify_sig_argv(
+            ["verify-sig", "msg.txt", "--signature", "abc123", "--identity", "card.json"]
+        )
+        assert out == ["verify-sig", "msg.txt", "--signature", "abc123", "--identity", "card.json"]
+
+    def test_rewrite_verify_sig_argv_equals_form_passthrough(self):
+        """An already-equals-form --signature=<v> passes through."""
+        import hermes_id.cli as cli
+
+        out = cli._normalize_verify_sig_argv(
+            ["verify-sig", "msg.txt", "--signature=abc123", "--identity", "card.json"]
+        )
+        assert "--signature=abc123" in out
+        assert "--identity" in out
+
+    def test_rewrite_verify_sig_argv_unknown_dash_option_before_file(self):
+        """An unrecognized dash token before the file positional is kept as an
+        option (argparse will reject it normally)."""
+        import hermes_id.cli as cli
+
+        out = cli._normalize_verify_sig_argv(
+            ["verify-sig", "--bogus", "msg.txt", "sig123"]
+        )
+        assert out[0] == "verify-sig"
+        assert "msg.txt" in out and "sig123" in out
+        assert "--bogus" in out
+
     def test_main_module_importable(self):
         """``python -m hermes_id`` entry module imports cleanly (the
         module-level import line is otherwise invisible to coverage)."""
@@ -218,6 +290,52 @@ class TestSignVerifySig:
         message.write_text("tampered!")
         assert main(["verify-sig", str(message), sig_b64, "--identity", card_path]) == 1
         assert "INVALID" in capsys.readouterr().out
+
+    def test_verify_sig_leading_dash_signature(self, created, identity_dir, tmp_path, capsys):
+        """A base64url signature that starts with '-' must verify cleanly.
+
+        Regression: argparse treats a leading-dash positional as an option
+        flag (SystemExit 2) — the base64url alphabet includes '-' and '_',
+        so a valid signature can begin with '-'. The --signature flag avoids
+        the ambiguity."""
+        import base64
+
+        from hermes_id.crypto import sign as _sign
+        from hermes_id.storage import IdentityStorage
+
+        storage = IdentityStorage(directory=identity_dir)
+        with storage.use_key("test-pass-1234") as private_key:
+            # Find a message whose signature naturally starts with '-' — the
+            # signature stays cryptographically valid (deterministic).
+            sig_b64 = base64.urlsafe_b64encode(_sign(private_key, b"0")).rstrip(b"=").decode()
+            i = 1
+            while not sig_b64.startswith("-"):
+                sig_b64 = base64.urlsafe_b64encode(
+                    _sign(private_key, str(i).encode())
+                ).rstrip(b"=").decode()
+                i += 1
+                assert i < 512, "could not find a leading-dash signature"
+
+        # --- positional form still must NOT raise SystemExit on a '-' sig ---
+        # (argparse would fail; assert the CLI survives the parse)
+        card_path = os.path.join(identity_dir, "identity.json")
+        m = tmp_path / "m6.txt"
+        m.write_bytes(str(i - 1).encode())
+
+        # --signature flag: the deterministic, unambiguous form.
+        assert main([
+            "verify-sig", str(m), "--identity", card_path,
+            "--signature", sig_b64,
+        ]) == 0
+        assert "VALID" in capsys.readouterr().out
+
+    def test_verify_sig_missing_signature(self, created, identity_dir, tmp_path, capsys):
+        """verify-sig without any signature argument returns a clean error."""
+        message = tmp_path / "m7.txt"
+        message.write_text("x")
+        card_path = os.path.join(identity_dir, "identity.json")
+        assert main(["verify-sig", str(message), "--identity", card_path]) == 1
+        assert "Signature required" in capsys.readouterr().err
 
     def test_verify_sig_malformed_signature(self, created, identity_dir, tmp_path, capsys):
         message = tmp_path / "m5.txt"

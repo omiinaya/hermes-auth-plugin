@@ -90,8 +90,14 @@ in an access control system.
 | `hermes-id verify <file>` | Verify an identity card's self-signature |
 | `hermes-id sign <file>` | Sign a file with your private key |
 | `hermes-id verify-sig <file> <sig> --identity <card>` | Verify a file signature |
+| `hermes-id verify-sig <file> --signature <sig> --identity <card>` | Same, but avoids the leading-`-` signature pitfall (see below) |
 | `hermes-id handshake listen [--port N]` | Start handshake server (responder role) |
 | `hermes-id handshake connect <host:port>` | Connect to a peer for mutual auth |
+
+> **Tip:** signatures are base64url, whose alphabet includes `-` and `_`.
+> If a signature happens to start with `-`, argparse would read it as an
+> option flag. The CLI auto-rewrites that case, and the `--signature`
+> flag is the always-unambiguous form.
 
 ## Hermes Plugin
 
