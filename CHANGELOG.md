@@ -37,6 +37,13 @@ All targets now use `$(PY)` (prefers `.venv/bin/python`) and
 `.venv/bin/ruff`. New `make check` runs lint + tests + the coverage gate
 in one command.
 
+### Added — .dockerignore (lean, secret-safe image builds)
+
+The Dockerfile's `COPY . /app/src-tree` had no .dockerignore, so build
+contexts carried `.git/`, `.venv/`, `dist/`, tests, docs — and could
+carry `.env`, `*.pem`, `*.key`, or `identity/` if present. The
+.dockerignore excludes all of those.
+
 ### Hardened — live auth server systemd unit
 
 Applied a hardening drop-in to the live `hermes-id-auth` unit:
