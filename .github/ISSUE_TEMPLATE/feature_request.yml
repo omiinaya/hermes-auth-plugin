@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose a new feature or enhancement for hermes-id
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement! Since this is a security-focused
+        project, please think about how your proposal affects the threat model,
+        key handling, and token/crypto correctness.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't you do today, or what's painful?
+      placeholder: "e.g. I'd like to verify a token without spinning up a service..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed solution
+      description: Describe the change or feature you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security / compatibility notes
+      description: >
+        How does this interact with the threat model (docs/THREAT_MODEL.md),
+        existing CLI/server APIs, or the wire protocol (docs/PROTOCOL.md)?
+        Does it require a version bump?
+      placeholder: "Backward compatible / adds a new endpoint / changes the wire protocol…"
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributions welcome
+      options:
+        - label: I'm willing to help implement this (open a PR)
