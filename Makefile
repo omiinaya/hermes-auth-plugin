@@ -1,30 +1,38 @@
-.PHONY: install dev test lint coverage clean clean-db plugin-install plugin-symlink server docker docker-run admin
+# Prefer the project venv; fall back to system python3.
+PY ?= $(shell command -v .venv/bin/python 2>/dev/null || command -v python3)
+
+.PHONY: install dev test lint coverage check clean clean-db plugin-install plugin-symlink server docker docker-run admin
 
 install:
-	pip install -e .
+	$(PY) -m pip install -e .
 
 dev:
-	pip install -e ".[all,dev]"
+	$(PY) -m pip install -e ".[all,dev]"
 
 test:
-	python -m pytest tests/ -v --tb=short -n auto
+	$(PY) -m pytest tests/ -v --tb=short -n auto
 
 test-verbose:
-	python -m pytest tests/ -v --tb=long -s
+	$(PY) -m pytest tests/ -v --tb=long -s
 
 test-server:
-	python -m pytest tests/test_server.py -v --tb=short
+	$(PY) -m pytest tests/test_server.py -v --tb=short
 
 coverage:
-	python -m pytest tests/ --cov=hermes_id --cov-branch --cov-report=term-missing --cov-fail-under=85 -q
+	$(PY) -m pytest tests/ --cov=hermes_id --cov-branch --cov-report=term-missing --cov-fail-under=85 -q
 
 coverage-html:
-	python -m pytest tests/ --cov=hermes_id --cov-branch --cov-report=html --cov-fail-under=85 -q
+	$(PY) -m pytest tests/ --cov=hermes_id --cov-branch --cov-report=html --cov-fail-under=85 -q
 
 lint:
-	python -m py_compile src/hermes_id/*.py
-	@command -v ruff >/dev/null || { echo "ERROR: ruff not installed — run 'pip install ruff'"; exit 1; }
-	ruff check src/ tests/
+	$(PY) -m py_compile src/hermes_id/*.py
+	@command -v .venv/bin/ruff >/dev/null || { echo "ERROR: ruff not installed — run 'make dev'"; exit 1; }
+	.venv/bin/ruff check src/ tests/
+
+# One-command pre-push gate: lint + tests + the coverage gate.
+check:
+	$(MAKE) lint
+	$(MAKE) coverage
 
 clean:
 	rm -rf build/ dist/ *.egg-info/

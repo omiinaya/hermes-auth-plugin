@@ -69,6 +69,7 @@ Each agent has:
 pip install -e ".[all,dev]"
 make test          # pytest -n auto (parallel)
 make coverage      # branch coverage, 85% gate (project is at 100%)
+make check         # lint + tests + coverage gate in one command
 make lint          # ruff
 ```
 

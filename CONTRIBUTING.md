@@ -53,9 +53,9 @@ make lint
 
 1. Run `make lint` — clean ruff.
 2. Run `make test` — all tests pass.
-3. Run `make coverage` — **or the full suite with `--cov-branch
-   --cov-fail-under=100`** to confirm you didn't lower the bar. The gate is
-   85 but the project sits at 100; keep it there.
+3. Run `make coverage` — **or `make check`** (lint + tests + the 100%
+   coverage gate in one command). The gate is 85 but the project sits at
+   100; keep it there.
 4. If you changed crypto, handshake, or auth logic, review `docs/THREAT_MODEL.md`
    and update it if your change affects the threat surface.
 5. Update `CHANGELOG.md` under "Unreleased".
