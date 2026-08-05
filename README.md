@@ -186,6 +186,7 @@ open a public issue for security bugs.
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | How to contribute — testing, lint, coverage gates |
 | [AGENTS.md](./AGENTS.md) | Quickstart for AI agent coders |
 | [SKILL.md](./SKILL.md) | Hermes Agent skill definition |
+| [examples/](./examples/README.md) | Runnable agent ↔ service examples |
 
 ## Contributing
 
