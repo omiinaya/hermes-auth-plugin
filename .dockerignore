@@ -1,0 +1,48 @@
+# Keep the auth-server image lean AND safe: never send secrets, VCS
+# history, or dev/build artifacts into the build context.
+
+# Secrets / credentials — never copy into the image
+.env
+*.env
+.env.*
+!*.env.example
+identity/
+data/
+*.pem
+*.key
+
+# VCS
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build / test artifacts
+build/
+dist/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+
+# Docs & dev (not needed at runtime; the installed package has its own)
+docs/
+examples/
+tests/
+deploy/
+Makefile
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
+AGENTS.md
+SKILL.md
+README.md
+
+# Local databases
+*.db
