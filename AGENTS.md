@@ -62,3 +62,10 @@ Each agent has:
 - `docs/ARCHITECTURE.md` — Full architectural decisions
 - `docs/PROTOCOL.md` — Wire protocol specification
 - `docs/THREAT_MODEL.md` — Security analysis & assumptions
+
+## Contributing
+
+- Report vulnerabilities privately — see [SECURITY.md](./SECURITY.md)
+- Contribution process, testing, and coverage gates — see
+  [CONTRIBUTING.md](./CONTRIBUTING.md)
+- CI runs ruff + the full pytest suite with a 100% branch-coverage bar
