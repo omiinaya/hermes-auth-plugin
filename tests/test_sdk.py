@@ -884,19 +884,16 @@ class TestCardPublicKeyBytes:
         prefix) is decoded directly — covers the startswith==False branch."""
         import base64
 
-        # Build a card with a REAL Ed25519 key so the decoded bytes match.
-        from cryptography.hazmat.primitives.asymmetric import ed25519
-
-        from hermes_id.crypto import public_key_bytes
         from hermes_id.identity import IdentityCard
         from hermes_id.sdk import _card_public_key_bytes
 
-        priv = ed25519.Ed25519PrivateKey.generate()
-        pub_bytes = public_key_bytes(priv.public_key())
-        bare_b64 = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
-
+        # Round-trip the fixture card and replace the public key with a bare
+        # base64url value (no "u" multibase prefix). Decoding it must return
+        # exactly the bytes we put in — independent of the fixture's key.
         card = IdentityCard.from_json(json.dumps(server_card))
         data = json.loads(card.to_json())
+        pub_bytes = b"\x01\x02\x03\x04" + b"\x05" * 28  # 32-byte Ed25519 key
+        bare_b64 = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
         data["verification_method"][0]["publicKeyMultibase"] = bare_b64  # no "u" prefix
         card2 = IdentityCard.from_json(json.dumps(data))
         assert _card_public_key_bytes(card2) == pub_bytes
