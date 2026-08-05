@@ -57,7 +57,10 @@ Since v1.3.0 the app-side SDK provides:
 
 ```bash
 # Install from the repo (not yet published to PyPI — until it is, the
-# source-tree install below is the only way to get the server extra):
+# source-tree install below is the only way to get the server extra).
+# On this box/LAN you can instead install from the local index:
+#   pip install --index-url http://192.168.1.10:9499/simple/ \
+#               --extra-index-url https://pypi.org/simple hermes-id
 git clone https://github.com/omiinaya/hermes-auth-plugin.git
 cd hermes-auth-plugin
 pip install '.[server]'
