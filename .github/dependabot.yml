@@ -1,0 +1,51 @@
+# Dependabot configuration
+
+version: 2
+updates:
+  # Python dependencies — hermes-id is a security project; stale
+  # cryptography/starlette/etc. versions are a real risk.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "security"
+    groups:
+      dev-deps:
+        patterns:
+          - "pytest*"
+          - "coverage"
+          - "ruff"
+        update-types:
+          - "minor"
+          - "patch"
+      runtime-deps:
+        patterns:
+          - "cryptography"
+          - "fastapi"
+          - "starlette"
+          - "uvicorn"
+          - "pydantic"
+          - "httpx"
+          - "pyjwt"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions — pin upstream actions to keep supply chain clean
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"

@@ -213,7 +213,11 @@ class IdentityStorage:
             private_key = deserialize_private_key(decrypted_der)
         finally:
             secure_zero(bytearray(encrypted))
-            if decrypted_der is not None:
+            # Unreachable false branch: decrypt_key either returns real bytes
+            # (true → zeroed below) or raises (the exception propagates out of
+            # this finally, so control never reaches the `return` below with
+            # decrypted_der still None).
+            if decrypted_der is not None:  # pragma: no cover
                 secure_zero(bytearray(decrypted_der))
         return private_key
 

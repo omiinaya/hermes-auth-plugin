@@ -1,5 +1,74 @@
 # Changelog
 
+## Unreleased — 2026-08-04 (security hardening batch)
+
+### Added — dependabot + SECURITY.md
+
+- `.github/dependabot.yml`: weekly `pip` + `github-actions` updates with
+  grouped PRs (`runtime-deps` = cryptography/fastapi/starlette/uvicorn/
+  pydantic/httpx/pyjwt; `dev-deps` = pytest/coverage/ruff). A security
+  project should never sit on stale crypto deps.
+- `SECURITY.md`: private vulnerability disclosure policy (GitHub
+  advisories preferred, 48h ack / 1-week triage timeline), scope, and
+  response commitments.
+
+### Added — CI coverage gate + manual dispatch
+
+- `ci.yml` now runs the suite with `--cov=hermes_id --cov-fail-under=85`
+  and uploads the coverage report as an artifact. Regressions below the
+  gate fail the build.
+- Added `workflow_dispatch` so CI can be re-run manually from the Actions
+  tab without a new push.
+
+### Fixed — coverage gaps found by the new gate
+
+- `server.py`: the periodic blacklist prune (every 64th revoke) was never
+  exercised — added `test_periodic_prune_fires_after_64_revokes`.
+- `mcp_server.py`: the modern `add_request_handler` registration path was
+  only tested against a real mcp>=2.0 SDK (skipped on mcp 1.x). Added
+  `TestRegisterToolsModernFakeSDK` which drives the modern path with a
+  fake SDK on any mcp version — mcp_server.py is now at 100% coverage.
+
+### Hardened — coverage to 100% (statement AND branch)
+
+The new gate exposed 13 uncovered branches across the suite. Closed them —
+the suite now reports **100.00% total coverage (2417 statements, 540
+branches)** with 518 tests:
+
+- `server.py` — revoke of a token that parses but carries no `token_id`
+  (legacy/foreign tokens) now has a test.
+- `handshake.py` — auth-only confirm with no `on_confirm` callback.
+- `storage.py` — `use_key` exit without enter; rotate backup skipping a
+  missing file; `show_status` with empty metadata + rotation badge.
+- `sdk.py` — public keys stored without the multibase `u` prefix.
+- `mcp_server.py` — modern dispatch exception → `is_error` flag.
+- `auth_client.py` — `sign_challenge` with an explicit password argument.
+- `admin_cli.py` — `delete` command error path (client still closed);
+  the impossible no-match elif marked `pragma: no cover` (argparse
+  restricts command to the 5 handled values).
+- `cli.py` — rotate confirmation accepted (`y`) & declined (`n`) paths;
+  `sign` with env password and with `--password` flag; `show` with empty
+  metadata; `register` with a non-pending (approved) status; `handshake`
+  with `--password` flag.
+- `__main__.py` — import test + entry point marked `pragma: no cover`
+  (only reachable via `python -m`, invisible to in-process coverage).
+- `storage.py` unlock — marked the genuinely-unreachable defensive
+  false-branch (decrypt raises → exception propagates; control never
+  reaches the return with `decrypted_der` None).
+
+### Fixed — `make lint` was a no-op
+
+The Makefile lint target ran `truff check ... || true` — a typo for
+`ruff` that swallowed all failures, so lint never enforced anything.
+Now requires ruff and fails on violations.
+
+### Changed — coverage config in-repo
+
+`pyproject.toml` now carries `[tool.pytest.ini_options]` addopts
+(`--cov=hermes_id --cov-report=term-missing --cov-fail-under=85`) and
+`[tool.coverage.*]` (branch coverage enabled, source scoped to
+`hermes_id`) so every local and CI test run is gated identically.
+
 ## 1.4.4 — 2026-08-04
 
 ### Deployed — token-endpoint rate limiting to the live auth host

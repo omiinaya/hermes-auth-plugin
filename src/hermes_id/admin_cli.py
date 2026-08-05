@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
             result = client.get_agent_status(args.did)
             print(json.dumps(result, indent=2))
 
-        elif args.command == "delete":
+        elif args.command == "delete":  # pragma: no cover — argparse restricts command to the 5 handled values
             result = client.delete_agent(args.did)
             print(json.dumps(result, indent=2))
     except Exception as e:

@@ -128,6 +128,22 @@ class TestAdminCLI:
         assert rc == 1
         assert "boom" in capsys.readouterr().err
 
+    def test_delete_error_path_returns_1(self, capsys, monkeypatch):
+        """delete command that raises → error printed, exit 1, client closed
+        (covers the delete-command exception branch)."""
+        import hermes_id.admin_cli as admin_cli
+
+        class ExplodingClient(FakeAuthClient):
+            def delete_agent(self, did):
+                raise RuntimeError("delete failed")
+
+        client = ExplodingClient()
+        monkeypatch.setattr(admin_cli, "AuthClient", lambda *a, **kw: client)
+        rc = main(["--server", "s", "--admin-key", "k", "delete", "did:hermes:abc"])
+        assert rc == 1
+        assert "delete failed" in capsys.readouterr().err
+        assert client.closed is True
+
     def test_requires_command(self):
         with pytest.raises(SystemExit):
             main(["--server", "s", "--admin-key", "k"])

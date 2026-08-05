@@ -5,6 +5,7 @@ Covers: create, unlock, status, config, missing identity, overwrite.
 """
 
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -324,3 +325,67 @@ class TestStorageConfigBranches:
 
         monkeypatch.setattr(hashlib, "scrypt", boom)
         assert storage_mod.IdentityStorage._detect_kdf() == "pbkdf2"
+
+
+class TestKeyContextExit:
+    """Branch coverage for _KeyContext.__exit__ edge cases."""
+
+    def test_exit_without_enter_leaves_key_none(self, created_identity):
+        """A use_key context whose __enter__ never ran still cleans up on
+        __exit__ — der_bytes is None so the zeroing guard is skipped."""
+        storage, password, _ = created_identity
+        ctx = storage.use_key(password)
+        # Calling __exit__ without __enter__ exercises the der_bytes-is-None branch
+        ctx.__exit__(None, None, None)
+        assert ctx._key is None
+        assert ctx._der_bytes is None
+
+    def test_show_status_with_empty_metadata(self):
+        """show_status renders a card whose metadata dict is empty — the
+        metadata/rotation display lines are skipped."""
+        from hermes_id.storage import IdentityStorage
+
+        with tempfile.TemporaryDirectory() as d:
+            storage = IdentityStorage(directory=d)
+            card = storage.create("password-1234", metadata={})
+            assert card.metadata == {}
+
+            # Render with an empty metadata dict → both conditional display
+            # lines are skipped.
+            status = storage.show_status()
+            assert card.id in status
+            assert "Metadata:" not in status
+            assert "Rotated:" not in status
+
+    def test_rotate_backup_skips_missing_file(self, created_identity):
+        """rotate() backups only files that exist — a missing config file is
+        skipped without error."""
+        storage, password, old_card = created_identity
+
+        # Simulate a partially-deleted identity dir: config file missing.
+        cfg_path = Path(storage._dir) / "storage.json"
+        assert cfg_path.exists()
+        cfg_path.unlink()
+
+        new_card = storage.rotate(password)
+        assert new_card.id != old_card.id
+        # Backup still holds the files that existed.
+        backup_root = Path(storage._dir) / "rotated"
+        subs = list(backup_root.iterdir())
+        assert len(subs) == 1
+        assert (subs[0] / "identity.json").exists()
+        assert (subs[0] / "private.enc").exists()
+
+
+class TestShowStatusMetadataLines:
+    def test_rotation_badge_without_base_metadata(self, tmp_path):
+        """A card carrying rotation info but an empty metadata dict renders
+        the 'Rotated' badge line."""
+        from hermes_id.storage import IdentityStorage
+
+        d = str(tmp_path / "ident")
+        storage = IdentityStorage(directory=d)
+        storage.create("password-1234")
+        storage.rotate("password-1234")  # produces a card with rotation metadata
+        status = storage.show_status()
+        assert "Rotated:" in status

@@ -162,6 +162,10 @@ Designed with **"as secure as possible"** as the primary constraint:
 
 See [THREAT_MODEL.md](./docs/THREAT_MODEL.md) for the complete security analysis.
 
+**Found a vulnerability?** Read [SECURITY.md](./SECURITY.md) — we accept
+private reports and follow a 48h-acknowledgement disclosure policy. Do NOT
+open a public issue for security bugs.
+
 ## Documentation
 
 | File | Contents |
@@ -169,6 +173,7 @@ See [THREAT_MODEL.md](./docs/THREAT_MODEL.md) for the complete security analysis
 | [ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Full architectural decisions and design rationale |
 | [PROTOCOL.md](./docs/PROTOCOL.md) | Wire protocol specification for implementers |
 | [THREAT_MODEL.md](./docs/THREAT_MODEL.md) | Security analysis, assumptions, and mitigations |
+| [SECURITY.md](./SECURITY.md) | Vulnerability disclosure policy and supported versions |
 | [AGENTS.md](./AGENTS.md) | Quickstart for AI agent coders |
 | [SKILL.md](./SKILL.md) | Hermes Agent skill definition |
 

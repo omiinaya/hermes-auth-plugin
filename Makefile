@@ -23,7 +23,8 @@ coverage-html:
 
 lint:
 	python -m py_compile src/hermes_id/*.py
-	truff check src/ tests/ 2>/dev/null || true
+	@command -v ruff >/dev/null || { echo "ERROR: ruff not installed — run 'pip install ruff'"; exit 1; }
+	ruff check src/ tests/
 
 clean:
 	rm -rf build/ dist/ *.egg-info/

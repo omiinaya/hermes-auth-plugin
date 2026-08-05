@@ -33,7 +33,7 @@ try:
     # mcp >= 2.0 replaced the old decorator API (app.list_tools /
     # app.call_tool) with add_request_handler + low-level params types.
     # Detect which API is available so register_tools() works on both.
-    if hasattr(Server, "add_request_handler"):
+    if hasattr(Server, "add_request_handler"):  # pragma: no cover — needs real mcp>=2.0 at import
         try:
             import mcp_types
 

@@ -740,6 +740,95 @@ class TestRegisterToolsLegacy:
         asyncio.run(run())
 
 
+class TestRegisterToolsModernFakeSDK:
+    """Exercise the modern ``add_request_handler`` registration path with a
+    FAKE modern SDK, so the branch is covered even when the installed mcp
+    SDK predates 2.0 (the real-SDK test class TestRegisterToolsModern is
+    skipped in that case).
+
+    This covers _register_tools_modern: handler registration, list/call
+    dispatch with mcp_types params, and the error→is_error conversion.
+    """
+
+    def test_modern_registration_with_fake_sdk(self, configured, monkeypatch):
+        import asyncio
+
+        import hermes_id.mcp_server as mod
+        from hermes_id.mcp_server import HermesIDMCPServer
+
+        # Force the modern branch regardless of the installed SDK
+        monkeypatch.setattr(mod, "_MCP_MODERN", True)
+
+        class FakeModernApp:
+            def __init__(self):
+                self.handlers: dict = {}
+
+            def add_request_handler(self, method, params_type, handler):
+                self.handlers[method] = (params_type, handler)
+
+        app = FakeModernApp()
+        srv = object.__new__(HermesIDMCPServer)
+        srv._storage = configured._storage
+        srv._app = app
+        srv.register_tools()
+
+        assert "tools/list" in app.handlers
+        assert "tools/call" in app.handlers
+
+        import mcp_types
+
+        list_params_type, on_list = app.handlers["tools/list"]
+        assert list_params_type is mcp_types.PaginatedRequestParams
+        _, on_call = app.handlers["tools/call"]
+
+        async def run():
+            result = await on_list(None, mcp_types.PaginatedRequestParams())
+            tools = result["tools"]
+            names = [t["name"] for t in tools]
+            assert len(names) == 7
+            assert "hermes_id_status" in names
+
+            r2 = await on_call(
+                None,
+                mcp_types.CallToolRequestParams(name="hermes_id_status", arguments={}),
+            )
+            assert '\"status\": \"ok\"' in r2["content"][0]["text"]
+
+            # success path (sign with passphrase configured) — no is_error
+            r3 = await on_call(
+                None,
+                mcp_types.CallToolRequestParams(name="hermes_id_sign", arguments={"message_b64": "aGVsbG8="}),
+            )
+            assert "is_error" not in r3  # success → no error flag
+            assert "signature_b64" in r3["content"][0]["text"]
+
+            # unknown tool → returned as JSON error text (no exception)
+            r4 = await on_call(
+                None,
+                mcp_types.CallToolRequestParams(name="unknown_tool", arguments={}),
+            )
+            assert "is_error" not in r4
+            assert "Unknown tool" in r4["content"][0]["text"]
+
+            # dispatch exception → is_error flag set to True
+        asyncio.run(run())
+
+        def boom(*a, **kw):
+            raise RuntimeError("kaboom")
+
+        monkeypatch.setattr(srv, "_dispatch", boom)
+
+        async def run_error():
+            r5 = await on_call(
+                None,
+                mcp_types.CallToolRequestParams(name="hermes_id_status", arguments={}),
+            )
+            assert r5["is_error"] is True
+            assert "kaboom" in r5["content"][0]["text"]
+
+        asyncio.run(run_error())
+
+
 class TestModuleGuards:
     def test_main_without_mcp_sdk(self, capsys, monkeypatch):
         """main() exits cleanly with a hint when the SDK is missing."""

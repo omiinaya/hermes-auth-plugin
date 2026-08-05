@@ -48,6 +48,12 @@ class TestDispatch:
         out = capsys.readouterr().out
         assert hermes_id_version in out
 
+    def test_main_module_importable(self):
+        """``python -m hermes_id`` entry module imports cleanly (the
+        module-level import line is otherwise invisible to coverage)."""
+        import hermes_id.__main__ as main_mod  # noqa: F401
+        assert hasattr(main_mod, "main")
+
     def test_no_command(self, capsys):
         assert main([]) == 2
         assert "Usage" in capsys.readouterr().err
@@ -110,6 +116,16 @@ class TestShowExportStatus:
         assert main(["show", "--dir", identity_dir]) == 0
         out = capsys.readouterr().out
         assert "did:hermes:" in out
+
+    def test_show_without_metadata(self, identity_dir, capsys):
+        """show on an identity created with no --profile renders without a
+        Metadata block (covers the empty-metadata branch)."""
+        rc = main(["init", "--dir", identity_dir, "--password", "test-pass-1234"])
+        assert rc == 0
+        assert main(["show", "--dir", identity_dir]) == 0
+        out = capsys.readouterr().out
+        assert "did:hermes:" in out
+        assert "Metadata:" not in out
 
     def test_export_stdout(self, created, identity_dir, capsys):
         assert main(["export", "--dir", identity_dir]) == 0
@@ -246,6 +262,28 @@ class TestRotate:
         rc = main(["rotate", "--dir", identity_dir, "--password", "test-pass-1234", "--force", "--no-backup"])
         assert rc == 0
         assert not os.path.isdir(os.path.join(identity_dir, "rotated"))
+
+    def test_rotate_cancelled_when_user_says_no(self, created, identity_dir, capsys, monkeypatch):
+        """rotate without --force is cancelled when the user answers 'n' —
+        covers the confirmation-declined branch."""
+        old_card = json.loads(Path(os.path.join(identity_dir, "identity.json")).read_text())
+        monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+        rc = main(["rotate", "--dir", identity_dir, "--password", "test-pass-1234"])
+        assert rc == 1
+        assert "Rotation cancelled" in capsys.readouterr().out
+        # Identity unchanged
+        new_card = json.loads(Path(os.path.join(identity_dir, "identity.json")).read_text())
+        assert new_card["id"] == old_card["id"]
+
+    def test_rotate_confirmed_when_user_says_yes(self, created, identity_dir, capsys, monkeypatch):
+        """rotate without --force proceeds when the user answers 'y' —
+        covers the confirmation-accepted branch."""
+        old_card = json.loads(Path(os.path.join(identity_dir, "identity.json")).read_text())
+        monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+        rc = main(["rotate", "--dir", identity_dir, "--password", "test-pass-1234"])
+        assert rc == 0
+        new_card = json.loads(Path(os.path.join(identity_dir, "identity.json")).read_text())
+        assert new_card["id"] != old_card["id"]
 
 
 class TestServerAndMcpDispatchers:
@@ -393,6 +431,30 @@ class TestDispatcherBranches:
         out = capsys.readouterr().out
         assert "Projects: spacetime-tv, spacetime-air" in out
 
+    def test_register_approved_status_skips_pending_hint(self, created, capsys, monkeypatch):
+        """Register with a non-pending status (e.g. already approved) does
+        not print the admin-approval hint — covers the status==pending
+        false branch."""
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            def register_agent(self, did, display_name=None, projects=None):
+                return {"status": "approved", "projects": ["spacetime-tv"]}
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "hermes_id.auth_client.AuthClient", FakeClient, raising=False,
+        )
+        monkeypatch.setenv("HERMES_AUTH_SERVER_URL", "http://127.0.0.1:9488")
+        rc = main(["register", "--dir", created, "--for", "spacetime-tv"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Status:   approved" in out
+        assert "Awaiting admin approval" not in out
+
     def test_register_no_identity(self, capsys, monkeypatch):
         monkeypatch.setenv("HERMES_AUTH_SERVER_URL", "http://127.0.0.1:9488")
         assert main(["register", "--dir", "/tmp/nonexistent-xyz"]) == 1
@@ -475,6 +537,26 @@ class TestPromptBranches:
         monkeypatch.setattr(_getpass, "getpass", lambda prompt="": "test-pass-1234")
         monkeypatch.delenv("HERMES_ID_PASSPHRASE", raising=False)
         assert main(["sign", "--dir", created, str(f)]) == 0
+        out = capsys.readouterr().out
+        assert "Signed" in out
+        assert (tmp_path / "data.txt.sig").exists()
+
+    def test_sign_with_env_password(self, created, tmp_path, capsys, monkeypatch):
+        """sign uses HERMES_ID_PASSPHRASE when set (skips getpass)."""
+        f = tmp_path / "data.txt"
+        f.write_text("hello")
+        monkeypatch.setenv("HERMES_ID_PASSPHRASE", "test-pass-1234")
+        assert main(["sign", "--dir", created, str(f)]) == 0
+        out = capsys.readouterr().out
+        assert "Signed" in out
+        assert (tmp_path / "data.txt.sig").exists()
+
+    def test_sign_with_flag_password(self, created, tmp_path, capsys, monkeypatch):
+        """sign accepts --password directly (skips env + getpass)."""
+        f = tmp_path / "data.txt"
+        f.write_text("hello")
+        monkeypatch.delenv("HERMES_ID_PASSPHRASE", raising=False)
+        assert main(["sign", "--dir", created, "--password", "test-pass-1234", str(f)]) == 0
         out = capsys.readouterr().out
         assert "Signed" in out
         assert (tmp_path / "data.txt.sig").exists()
@@ -684,7 +766,29 @@ class TestHandshakeCli:
         assert cli._cmd_handshake(args) == 1
 
     def test_handshake_unlock_failure(self, created, capsys, monkeypatch):
+        import hermes_id.cli as cli
+
+        monkeypatch.setattr(cli, "run_handshake_server", lambda **kw: None)
         monkeypatch.setenv("HERMES_ID_PASSPHRASE", "wrong-password")
         rc = main(["handshake", "listen", "--dir", created])
         assert rc == 1
         assert "Cannot unlock identity" in capsys.readouterr().err
+
+    def test_handshake_with_flag_password(self, created, capsys, monkeypatch):
+        """handshake listen accepts --password directly (skips env + getpass)
+        — covers the password-truthy branch in _cmd_handshake."""
+        import hermes_id.cli as cli
+
+        calls: dict = {}
+        monkeypatch.setattr(
+            cli,
+            "run_handshake_server",
+            lambda **kw: calls.update(kw) or None,
+        )
+        monkeypatch.delenv("HERMES_ID_PASSPHRASE", raising=False)
+        assert main([
+            "handshake", "listen", "--dir", created,
+            "--password", "test-pass-1234", "--port", "9877",
+        ]) == 0
+        assert calls["port"] == 9877
+        assert "Starting handshake server" in capsys.readouterr().out

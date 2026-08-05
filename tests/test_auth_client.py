@@ -135,6 +135,24 @@ class TestSignChallengeErrors:
         finally:
             client.close()
 
+    def test_sign_with_explicit_password(self, tmp_path):
+        """sign_challenge accepts an explicit password (skips env lookup)."""
+        from hermes_id.auth_client import AuthClient
+        from hermes_id.storage import IdentityStorage
+
+        d = str(tmp_path / "identity")
+        IdentityStorage(directory=d).create("secret-pass-1234")
+        client = AuthClient("http://auth.test", identity_dir=d)
+        try:
+            # Password passed explicitly → signs without touching the env.
+            sig = client.sign_challenge("QUFBQQ==", password="secret-pass-1234")
+            assert sig
+            import base64
+
+            base64.urlsafe_b64decode(sig + "==")
+        finally:
+            client.close()
+
     def test_get_identity_card_json_without_identity(self):
         from hermes_id.auth_client import AuthClient
 

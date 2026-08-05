@@ -826,6 +826,38 @@ class TestAuthOnlyMode:
         assert hp.session_key is None
         assert confirmed == [(bob_card.id, b"")]
 
+    def test_confirm_without_x25519_auth_only_no_callback(self, alice, bob):
+        """Auth-only confirm with NO on_confirm callback — covers the
+        `if self.on_confirm:` false branch."""
+        from hermes_id.crypto import _b64 as _c64
+        from hermes_id.crypto import sign as _sign
+
+        hp = HandshakeProtocol(alice[1], alice[0], is_responder=False)
+        hp._state = hp._state.__class__.AUTH_SENT
+        bob_private, bob_card = bob
+        confirm_payload = {
+            "status": "ok",
+            "peer_did": bob_card.id,
+            "responder_x25519": "",  # no session key exchange
+        }
+        to_sign = json.dumps({
+            "status": "ok",
+            "peer_did": bob_card.id,
+            "responder_x25519": "",
+        })
+        sig = _sign(bob_private, to_sign.encode("utf-8"))
+        resp = hp.handle_message(HandshakeMessage(
+            msg_type="confirm",
+            payload={
+                "identity_card": bob_card.to_json(),
+                "signature": _c64(sig),
+                **confirm_payload,
+            },
+        ))
+        assert resp.msg_type == "confirm"
+        assert resp.payload["status"] == "authenticated"
+        assert hp.is_authenticated
+
     def test_confirm_out_of_sequence(self, alice, bob):
         """A confirm before AUTH_SENT state is rejected."""
         hp = _alice_hp(alice, is_responder=False)

@@ -5,6 +5,7 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:  # allow manual re-runs from the Actions tab
 
 jobs:
   test:
@@ -44,7 +45,15 @@ jobs:
 
       - name: Test
         run: |
-          python -m pytest tests/ -v --tb=short
+          python -m pytest tests/ -v --tb=short --cov=hermes_id --cov-report=term-missing --cov-fail-under=85
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage
+          retention-days: 14
 
       - name: Test server import
         run: |

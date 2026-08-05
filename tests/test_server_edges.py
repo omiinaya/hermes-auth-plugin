@@ -316,6 +316,88 @@ class TestInvalidationPrune:
         assert r.status_code == 200
         assert r.json()["valid"] is False
 
+    def test_periodic_prune_fires_after_64_revokes(
+        self, server, client, agent_identity, monkeypatch
+    ):
+        """Every 64th revoke opportunistically prunes the blacklist, keeping
+        the invalidated_tokens table bounded (server.py line ~893)."""
+        import sqlite3 as _sqlite3
+
+        storage, card = _register_approved(server, client, agent_identity)
+
+        def _mint_token():
+            chal = _get_challenge(client, card.id)
+            sig = _sign_with(storage, chal)
+            r = client.post(
+                "/authenticate",
+                json={
+                    "did": card.id,
+                    "identity_card": card.to_json(),
+                    "signature_b64": sig,
+                    "challenge_b64": chal,
+                },
+            )
+            assert r.status_code == 200, r.text
+            return r.json()["token"]
+
+        # Spy on the prune to observe the periodic trigger without waiting
+        # for real row expiry.
+        pruned = []
+        original_prune = server._prune_invalidated_tokens
+
+        def _spy_prune():
+            pruned.append(True)
+            return original_prune()
+
+        monkeypatch.setattr(server, "_prune_invalidated_tokens", _spy_prune)
+
+        # Prime the counter to just below the boundary so one more revoke
+        # crosses 64.
+        server._revoke_count = 63
+        rv = client.post("/token/revoke", json={"token": _mint_token()})
+        assert rv.status_code == 200
+        assert rv.json()["status"] == "revoked"
+        assert pruned, "expected the periodic prune to fire on the 64th revoke"
+
+        # And the counter kept counting past the boundary.
+        assert server._revoke_count == 64
+
+        # The prune ran against a real table: revoking 64 more times (via
+        # fresh tokens) must not error, and the table stays queryable.
+        conn = _sqlite3.connect(str(server._invalidation_db_path))
+        count = conn.execute("SELECT COUNT(*) FROM invalidated_tokens").fetchone()[0]
+        conn.close()
+        assert count >= 1
+
+        for _ in range(3):
+            rv = client.post("/token/revoke", json={"token": _mint_token()})
+            assert rv.status_code == 200
+        assert server._revoke_count == 67
+        assert len(pruned) == 1, "prune fires once per 64-revoke boundary only"
+
+    def test_revoke_token_without_token_id_still_counts(self, server, client):
+        """A token that parses but carries no token_id is revoked without a
+        blacklist write, and still increments the revoke counter (the
+        `if token_id:` false branch)."""
+        # Mint a signed token whose payload has no token_id field at all.
+        token = server._sign_token(
+            {
+                "did": "did:hermes:legacy",
+                "aud": "test",
+                "expires_at": time.time() + 3600,
+                # deliberately no token_id
+            }
+        )
+        rv = client.post("/token/revoke", json={"token": token})
+        assert rv.status_code == 200
+        assert rv.json()["status"] == "revoked"
+        assert server._revoke_count == 1
+
+        # And verify still passes (not blacklisted — nothing to blacklist).
+        r = client.post("/verify", json={"token": token})
+        assert r.status_code == 200
+        assert r.json()["valid"] is True
+
 
 # ---------------------------------------------------------------------------
 # Keypair loading / admin key configuration
