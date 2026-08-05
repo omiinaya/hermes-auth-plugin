@@ -51,6 +51,13 @@ carry `.env`, `*.pem`, `*.key`, or `identity/` if present. The
 merge-conflict checks. Lint only — the project doesn't enforce
 ruff-format, matching the Makefile/CI.
 
+### Fixed — standalone RevocationChecker honored HERMES_AUTH_VERIFY
+
+A directly-constructed `RevocationChecker` ignored `HERMES_AUTH_VERIFY`,
+so it could verify TLS differently than `AuthClient` / `HermesIDAuth`
+(the middleware path). It now resolves the env var identically
+(explicit arg > env > default True).
+
 ### Hardened — live auth server systemd unit
 
 Applied a hardening drop-in to the live `hermes-id-auth` unit:

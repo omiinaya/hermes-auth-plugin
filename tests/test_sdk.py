@@ -346,6 +346,25 @@ class TestRevocationChecker:
         checker = RevocationChecker(server_url)
         assert checker.is_revoked(token, "") is False
 
+    def test_verify_env_false_honored(self, monkeypatch):
+        """A standalone RevocationChecker honors HERMES_AUTH_VERIFY=false,
+        matching AuthClient / HermesIDAuth behavior."""
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", "false")
+        checker = RevocationChecker("http://auth.test")
+        assert checker._verify is False
+
+    def test_verify_env_ca_path_honored(self, monkeypatch):
+        """HERMES_AUTH_VERIFY as a CA-bundle path is passed through."""
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", "/tmp/ca.pem")
+        checker = RevocationChecker("http://auth.test")
+        assert checker._verify == "/tmp/ca.pem"
+
+    def test_verify_explicit_false_wins_over_env(self, monkeypatch):
+        """An explicit verify=False beats the env var."""
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", "true")
+        checker = RevocationChecker("http://auth.test", verify=False)
+        assert checker._verify is False
+
     def test_expired_entries_swept(self, token, server_url):
         """Cache entries past their TTL are evicted so a stream of unique
         token_ids can't grow the dict without limit."""

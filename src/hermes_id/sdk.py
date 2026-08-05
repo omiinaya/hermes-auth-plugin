@@ -318,6 +318,17 @@ class RevocationChecker:
         timeout: float = _DEFAULT_TIMEOUT,
         verify: bool | str = True,
     ):
+        # TLS verification: explicit arg > HERMES_AUTH_VERIFY env > default
+        # True — same resolution as AuthClient / HermesIDAuth so a standalone
+        # RevocationChecker behaves identically to the middleware path.
+        if verify is True and os.environ.get("HERMES_AUTH_VERIFY"):
+            env_verify = os.environ["HERMES_AUTH_VERIFY"].strip().lower()
+            if env_verify in ("false", "0", "no"):
+                verify = False
+            elif env_verify in ("true", "1", "yes"):
+                verify = True
+            else:
+                verify = env_verify  # CA bundle path
         self._server_url = server_url.rstrip("/")
         self._ttl = ttl
         self._timeout = timeout
