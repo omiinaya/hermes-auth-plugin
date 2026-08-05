@@ -86,6 +86,8 @@ accept hermes-id tokens:
   `src/hermes_id/sdk.py` (no server round-trip needed)
 - FastAPI protection: `HermesIDAuth` in `src/hermes_id/fastapi_middleware.py`
 - Example service: `examples/protected_service.py`
+- Example agent: `examples/agent_client.py`
+- Walkthrough: `examples/README.md`
 
 The live server in this environment: `https://192.168.1.10:9488`.
 
