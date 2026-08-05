@@ -4,7 +4,7 @@ install:
 	pip install -e .
 
 dev:
-	pip install -e ".[all]"
+	pip install -e ".[all,dev]"
 
 test:
 	python -m pytest tests/ -v --tb=short -n auto

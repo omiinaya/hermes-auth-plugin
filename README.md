@@ -187,10 +187,10 @@ open a public issue for security bugs.
 ## Development
 
 ```bash
-# Install with all extras
-pip install -e ".[all]"
+# Install with all extras + dev tools (pytest-xdist for parallel tests)
+pip install -e ".[all,dev]"
 
-# Run tests
+# Run tests (parallel with pytest-xdist)
 make test
 
 # Code quality
