@@ -36,6 +36,15 @@ but only `mcp>=1.0.0` was declared. `mcp-types` was being pulled in
 transitively; it's now an explicit dependency of both the `mcp` and
 `all` extras so the modern path can't break on a future mcp release.
 
+### Fixed — integration-test subprocess timeout (xdist flake)
+
+`test_integration.py` ran CLI subprocesses with a 30s timeout; `init`
+runs scrypt/argon2 (memory-hard KDF) in the subprocess, and under xdist
+parallel load (48 workers deriving keys) the box's CPUs saturate and the
+subprocess exceeded 30s — a flaky `subprocess.TimeoutExpired` in CI.
+Raised to 120s: still fails fast on a genuinely wedged CLI, tolerant of
+KDF contention. Verified: 15/15 integration tests pass under `-n 8`.
+
 ### Added — contribution & issue hygiene
 
 - `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),

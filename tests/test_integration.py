@@ -55,7 +55,11 @@ def _run(*args: str, input_text: str = "") -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         input=input_text,
-        timeout=30,
+        # Generous: `init` runs scrypt/argon2 (memory-hard KDF) in the
+        # subprocess, and under xdist parallel load the box's CPUs saturate
+        # (48 workers all deriving keys). 30s was flaky; 120s still fails
+        # fast on a genuinely wedged CLI but tolerates KDF contention.
+        timeout=120,
         env=env,
     )
 
