@@ -489,10 +489,13 @@ class TestDispatcherBranches:
             "--port", "9999", "--host", "127.0.0.1",
             "--admin-key", "k", "--cors-origins", "https://a,https://b",
             "--token-ttl", "120",
+            "--rate-limit-max", "5", "--rate-limit-window", "30.0",
         ]) == 0
         assert calls["init"]["admin_key"] == "k"
         assert calls["init"]["cors_origins"] == ["https://a", "https://b"]
         assert calls["init"]["token_ttl"] == 120
+        assert calls["init"]["rate_limit_max"] == 5
+        assert calls["init"]["rate_limit_window"] == 30.0
         assert calls["run"]["port"] == 9999
         assert calls["run"]["host"] == "127.0.0.1"
 

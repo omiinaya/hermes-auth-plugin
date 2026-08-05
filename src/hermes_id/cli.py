@@ -124,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     server_p.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     server_p.add_argument("--db", help="Path to agent registry database (default: agent_registry.db)")
     server_p.add_argument("--token-ttl", type=int, default=86400, help="Token lifetime in seconds (default: 86400)")
+    server_p.add_argument("--rate-limit-max", type=int, default=30, help="Max requests per IP per window (default: 30)")
+    server_p.add_argument("--rate-limit-window", type=float, default=60.0, help="Rate-limit window in seconds (default: 60)")
     server_p.add_argument("--admin-key", help="Admin API key for approving/denying agents (default: random)")
     server_p.add_argument("--cors-origins", default="*", help="Comma-separated CORS allowed origins (default: *)")
     server_p.add_argument("--tls-cert", help="Path to TLS certificate (PEM) — enables HTTPS")
@@ -617,6 +619,8 @@ def _cmd_server(args: argparse.Namespace) -> int:
         token_ttl=args.token_ttl,
         admin_key=args.admin_key,
         cors_origins=args.cors_origins.split(",") if args.cors_origins else None,
+        rate_limit_max=args.rate_limit_max,
+        rate_limit_window=args.rate_limit_window,
     )
     server.run(
         host=args.host,

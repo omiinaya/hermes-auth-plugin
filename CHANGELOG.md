@@ -77,6 +77,12 @@ remote cache upload/download slowed the run from ~10min to ~38min.
 The PyPI publish workflow now cancels in-flight runs when a newer tag
 push arrives, so two tags pushed in quick succession can't race on PyPI.
 
+### Added — `hermes-id server` rate-limit flags
+
+`--rate-limit-max` and `--rate-limit-window` are now exposed on the
+server CLI (previously operators had to edit code to tune rate limiting).
+Defaults match the built-in 30 req / 60 s.
+
 ### Fixed — /agent/status leaked the auth-server URL
 
 `build_agent_router`'s unauthenticated `/agent/status` returned
