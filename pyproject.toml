@@ -60,6 +60,11 @@ hermes-id-admin = "hermes_id.admin_cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# PEP 561: ship the py.typed marker so type checkers (mypy, pyright)
+# treat hermes_id as fully typed.
+[tool.setuptools.package-data]
+"hermes_id" = ["py.typed"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

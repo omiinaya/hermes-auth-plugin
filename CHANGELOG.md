@@ -69,6 +69,20 @@ Now requires ruff and fails on violations.
 `[tool.coverage.*]` (branch coverage enabled, source scoped to
 `hermes_id`) so every local and CI test run is gated identically.
 
+### Added — packaging completeness (LICENSE + PEP 561 py.typed)
+
+- `LICENSE` (MIT) — the project declared MIT in pyproject/README but
+  shipped no license file; the wheel/sdist now include it.
+- `src/hermes_id/py.typed` + `[tool.setuptools.package-data]` — PEP 561
+  marker so type checkers (mypy, pyright) treat hermes_id as typed.
+
+### Fixed — CI coverage artifact upload
+
+`upload-artifact` (v4+) respects `.gitignore`, and `.coverage` is
+gitignored — the artifact step silently uploaded nothing. The Test step
+now copies the data to a non-ignored `coverage-<python>.data` name and
+the upload path includes both.
+
 ## 1.4.4 — 2026-08-04
 
 ### Deployed — token-endpoint rate limiting to the live auth host
