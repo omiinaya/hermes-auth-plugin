@@ -1,7 +1,7 @@
 # Prefer the project venv; fall back to system python3.
 PY ?= $(shell command -v .venv/bin/python 2>/dev/null || command -v python3)
 
-.PHONY: install dev test lint coverage check clean clean-db plugin-install plugin-symlink server docker docker-run admin
+.PHONY: install dev test lint coverage check clean clean-db plugin-install plugin-symlink server docker docker-run admin publish-local
 
 install:
 	$(PY) -m pip install -e .
@@ -68,6 +68,11 @@ docker-run:
 admin:
 	@echo "Usage: make admin ARGS=\"--server http://localhost:9488 --admin-key KEY <cmd>\""
 	hermes-id-admin $(ARGS)
+
+# Refresh the local PEP 503 package index (http://192.168.1.10:9499/simple/)
+# with the current build — part of the release process.
+publish-local:
+	./scripts/publish-local.sh
 
 plugin-install:
 	@echo "Installing Hermes plugin..."
