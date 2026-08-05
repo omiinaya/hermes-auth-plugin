@@ -65,6 +65,12 @@ so it could verify TLS differently than `AuthClient` / `HermesIDAuth`
 (the middleware path). It now resolves the env var identically
 (explicit arg > env > default True).
 
+### Changed — CI install (pip cache, no redundant ruff)
+
+Removed the redundant `pip install ruff` (it ships in `[dev]` extras) and
+added an `actions/cache` for `~/.cache/pip` keyed on `pyproject.toml` to
+speed up the Install step on the shared runner.
+
 ### Hardened — live auth server systemd unit
 
 Applied a hardening drop-in to the live `hermes-id-auth` unit:
