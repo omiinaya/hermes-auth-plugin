@@ -72,6 +72,11 @@ An attempted `actions/cache` for `~/.cache/pip` was reverted — the
 self-hosted runner already keeps a persistent local pip cache, and the
 remote cache upload/download slowed the run from ~10min to ~38min.
 
+### Added — publish workflow concurrency guard
+
+The PyPI publish workflow now cancels in-flight runs when a newer tag
+push arrives, so two tags pushed in quick succession can't race on PyPI.
+
 ### Fixed — /agent/status leaked the auth-server URL
 
 `build_agent_router`'s unauthenticated `/agent/status` returned
