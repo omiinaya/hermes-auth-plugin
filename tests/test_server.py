@@ -116,6 +116,15 @@ class TestServerHealth:
         h = client.health()
         assert h["status"] == "ok"
         assert h["did"].startswith("did:hermes:")
+        # uptime must be a real elapsed-seconds value (not the epoch — that
+        # bug shipped a ~1.7e9 number and was fixed in 1.5.0), and it must
+        # grow between two calls.
+        assert 0 <= h["uptime"] < 3600, f"uptime looks like epoch: {h['uptime']}"
+        import time as _time
+
+        _time.sleep(1.1)
+        h2 = client.health()
+        assert h2["uptime"] > h["uptime"]
 
     def test_identity(self, server_url):
         client = AuthClient(server_url)

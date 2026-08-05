@@ -45,6 +45,14 @@ subprocess exceeded 30s — a flaky `subprocess.TimeoutExpired` in CI.
 Raised to 120s: still fails fast on a genuinely wedged CLI, tolerant of
 KDF contention. Verified: 15/15 integration tests pass under `-n 8`.
 
+### Fixed — /health uptime was the epoch, not elapsed seconds (real bug)
+
+`GET /health` returned `"uptime": time.time()` — the current epoch
+(~1.7 billion), not seconds since server start. Any consumer reading
+`uptime` got a meaningless number. Now tracks `_started_at` and returns
+`time.time() - self._started_at`. Test asserts uptime is a small value
+and grows between calls.
+
 ### Added — contribution & issue hygiene
 
 - `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),

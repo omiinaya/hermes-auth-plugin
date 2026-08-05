@@ -308,6 +308,7 @@ class AuthServer:
         self._rate_limiter = RateLimiter(max_requests=rate_limit_max, window_seconds=rate_limit_window)
         self._challenge_sweeps = 0
         self._revoke_count = 0
+        self._started_at = time.time()
 
         # Logging
         self._log = _logger
@@ -672,7 +673,7 @@ class AuthServer:
                 "status": "ok",
                 "did": card.id if card else "unconfigured",
                 "version": SERVER_VERSION,
-                "uptime": time.time(),
+                "uptime": round(time.time() - self._started_at, 3),
             }
 
         # ------------------------------------------------------------------
