@@ -248,7 +248,7 @@ sudo systemctl enable --now hermes-id-auth
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | GET | `/identity` | None | Server's identity card |
-| GET | `/health` | None | Health check |
+| GET | `/health` | None | Health check — `{status, did, version, uptime}` (uptime = elapsed seconds since start) |
 | POST | `/challenge` | None | Get challenge nonce |
 | POST | `/authenticate` | None | Prove identity → get token (accepts `aud`) |
 | POST | `/verify` | None | Verify a token (returns `aud` too) |
