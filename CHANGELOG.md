@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.1 — 2026-08-05 (health-endpoint fixes)
+
+### Fixed — /health uptime was the epoch, not elapsed seconds
+
+`GET /health` returned `"uptime": time.time()` — the current epoch
+(~1.7 billion), not seconds since server start. Any consumer reading
+`uptime` got a meaningless number. Now tracks `_started_at` and returns
+`time.time() - self._started_at`.
+
+### Fixed — /health 500'd on an unconfigured server
+
+The `did: "unconfigured"` branch was dead code — `get_identity_card()`
+raises `FileNotFoundError` when no identity exists, so /health 500'd
+instead of reporting `"unconfigured"`. Now catches it.
+
 ## 1.5.0 — 2026-08-05 (security hardening + CLI robustness)
 
 ### Deployed — security hardening batch to all live installs
@@ -44,21 +59,6 @@ parallel load (48 workers deriving keys) the box's CPUs saturate and the
 subprocess exceeded 30s — a flaky `subprocess.TimeoutExpired` in CI.
 Raised to 120s: still fails fast on a genuinely wedged CLI, tolerant of
 KDF contention. Verified: 15/15 integration tests pass under `-n 8`.
-
-### Fixed — /health uptime was the epoch, not elapsed seconds (real bug)
-
-`GET /health` returned `"uptime": time.time()` — the current epoch
-(~1.7 billion), not seconds since server start. Any consumer reading
-`uptime` got a meaningless number. Now tracks `_started_at` and returns
-`time.time() - self._started_at`. Test asserts uptime is a small value
-and grows between calls.
-
-### Fixed — /health 500'd when the server had no identity
-
-The `did: "unconfigured"` branch was dead code — `get_identity_card()`
-raises `FileNotFoundError` when unconfigured, so /health 500'd instead
-of reporting `"unconfigured"`. Now catches it. Test covers the
-unconfigured path.
 
 ### Added — contribution & issue hygiene
 

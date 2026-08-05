@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-id"
-version = "1.5.0"
+version = "1.5.1"
 description = "Self-Sovereign Identity for Hermes Agent — Ed25519 DID, verifiable identity cards, secure handshake protocol, HTTP auth server, and MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
