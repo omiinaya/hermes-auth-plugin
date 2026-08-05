@@ -16,10 +16,10 @@ test-server:
 	python -m pytest tests/test_server.py -v --tb=short
 
 coverage:
-	python -m pytest tests/ --cov=hermes_id --cov-report=term-missing -q
+	python -m pytest tests/ --cov=hermes_id --cov-branch --cov-report=term-missing --cov-fail-under=85 -q
 
 coverage-html:
-	python -m pytest tests/ --cov=hermes_id --cov-report=html -q
+	python -m pytest tests/ --cov=hermes_id --cov-branch --cov-report=html --cov-fail-under=85 -q
 
 lint:
 	python -m py_compile src/hermes_id/*.py
