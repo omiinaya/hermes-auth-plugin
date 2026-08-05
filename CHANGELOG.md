@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — 2026-08-04 (security hardening batch)
+## 1.5.0 — 2026-08-05 (security hardening + CLI robustness)
 
 ### Added — contribution & issue hygiene
 
