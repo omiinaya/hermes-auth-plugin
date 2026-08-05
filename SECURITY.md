@@ -73,6 +73,7 @@ Out of scope (report to the respective project):
 
 ## Secure development
 
-- CI runs the full test suite + ruff lint on every push (`.github/workflows/ci.yml`)
+- CI runs the full test suite (parallel) + ruff lint on every push
+  (`.github/workflows/ci.yml`), gated on 100% branch coverage
 - Dependabot watches `pip` and `github-actions` dependencies weekly
 - All new code paths must ship with tests; coverage is tracked in CI
