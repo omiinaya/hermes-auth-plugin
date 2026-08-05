@@ -241,6 +241,12 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now hermes-id-auth
 ```
 
+> The unit runs as an unprivileged user with systemd hardening
+> (`NoNewPrivileges`, `PrivateTmp/Devices`, `ProtectSystem=full`,
+> `ProtectHome`, kernel/cgroup protection, `RestrictAddressFamilies`,
+> `MemoryDenyWriteExecute`) — an auth server holding keys/tokens should
+> not run as root with full system access.
+
 ## API Reference
 
 ### Auth Server Endpoints
