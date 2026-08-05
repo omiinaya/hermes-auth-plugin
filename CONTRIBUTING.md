@@ -47,7 +47,7 @@ make lint
   - `mcp_server.py` — MCP server exposing auth tools
 - `plugins/hermes-id/` — the Hermes Agent plugin
 - `docs/` — architecture, protocol, integration, threat model
-- `tests/` — the test suite (521+ tests, 100% branch coverage)
+- `tests/` — the test suite (529+ tests, 100% branch coverage)
 
 ## Before submitting
 
