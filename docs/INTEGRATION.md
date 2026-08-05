@@ -309,3 +309,13 @@ from hermes_id.sdk import load_server_card, verify_token_offline
 card = load_server_card("http://192.168.1.10:9488")
 payload = verify_token_offline(token, card, project="spacetime-tv")
 ```
+
+## FastAPI plugin helper endpoints
+
+`hermes_id.fastapi_plugin.build_agent_router(auth)` mounts two routes on
+your service (prefix default `/hermes-id`):
+
+| Route | Auth | Purpose |
+|-------|------|---------|
+| `GET /agent/me` | Bearer token | Echo the authenticated agent's payload (`did`, `aud`, expiry) |
+| `GET /agent/status` | None | Liveness — `configured`, `project`, `server_card_cached`, `server_did` (does NOT expose the auth-server URL) |
