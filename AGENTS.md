@@ -63,6 +63,17 @@ Each agent has:
 - `docs/PROTOCOL.md` — Wire protocol specification
 - `docs/THREAT_MODEL.md` — Security analysis & assumptions
 
+## Development
+
+```bash
+pip install -e ".[all,dev]"
+make test          # pytest -n auto (parallel)
+make coverage      # branch coverage, 85% gate (project is at 100%)
+make lint          # ruff
+```
+
+Keep coverage at 100% — CI enforces the gate.
+
 ## Contributing
 
 - Report vulnerabilities privately — see [SECURITY.md](./SECURITY.md)
