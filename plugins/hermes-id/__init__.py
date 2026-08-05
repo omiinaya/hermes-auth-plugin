@@ -46,7 +46,7 @@ def _find_cli() -> str:
 # ---------------------------------------------------------------------------
 
 _HELP_TEXT = """\
-🔐 **hermes-id v1.4** — Self-Sovereign Identity for this Hermes instance.
+🔐 **hermes-id v1.5** — Self-Sovereign Identity for this Hermes instance.
 
 **Identity:**
   `/hermes-id status`         — Show identity status
