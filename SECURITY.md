@@ -69,6 +69,10 @@ Out of scope (report to the respective project):
   (`aud`); services verify offline against the server's public identity.
 - Rate limiting is enforced on all token endpoints (`/verify`,
   `/token/refresh`, `/token/revoke`) to slow credential stuffing.
+- The admin key is compared in **constant time** (`hmac.compare_digest`)
+  to prevent timing side-channels.
+- Tokens carry a unique `token_id` and can be revoked server-side; the
+  server maintains an invalidation blacklist.
 - See `docs/THREAT_MODEL.md` for the full threat model and assumptions.
 
 ## Secure development
