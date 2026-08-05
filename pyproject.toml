@@ -57,6 +57,13 @@ dev = [
 hermes-id = "hermes_id.cli:main"
 hermes-id-admin = "hermes_id.admin_cli:main"
 
+[project.urls]
+Homepage = "https://github.com/omiinaya/hermes-auth-plugin"
+Repository = "https://github.com/omiinaya/hermes-auth-plugin"
+Documentation = "https://github.com/omiinaya/hermes-auth-plugin/tree/master/docs"
+Changelog = "https://github.com/omiinaya/hermes-auth-plugin/blob/master/CHANGELOG.md"
+Issues = "https://github.com/omiinaya/hermes-auth-plugin/issues"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
