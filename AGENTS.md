@@ -74,6 +74,20 @@ make lint          # ruff
 
 Keep coverage at 100% — CI enforces the gate.
 
+## Auth Server (for integrating services)
+
+hermes-id also ships an HTTP **Auth Server** (tokens, agent registry,
+revocation) for service-to-service auth. If you're wiring a service to
+accept hermes-id tokens:
+
+- Deploy & endpoints: [docs/INTEGRATION.md](./docs/INTEGRATION.md)
+- Offline token verification: `verify_token_offline()` in
+  `src/hermes_id/sdk.py` (no server round-trip needed)
+- FastAPI protection: `HermesIDAuth` in `src/hermes_id/fastapi_middleware.py`
+- Example service: `examples/protected_service.py`
+
+The live server in this environment: `https://192.168.1.10:9488`.
+
 ## Contributing
 
 - Report vulnerabilities privately — see [SECURITY.md](./SECURITY.md)
