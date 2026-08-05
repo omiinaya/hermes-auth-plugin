@@ -29,6 +29,14 @@ venv (MCP), and gateway plugin. Auth server restarted and verified:
 health reports 1.5.1 with a real `uptime` (elapsed seconds, ~29s — not
 the epoch), identity DID unchanged, MCP serverInfo advertises 1.5.1.
 
+### Changed — make targets use the project venv; added `make check`
+
+Bare `python`/`ruff` aren't on PATH in a shell without the venv active
+(exit 127), so `make lint|test|coverage` were broken for a fresh clone.
+All targets now use `$(PY)` (prefers `.venv/bin/python`) and
+`.venv/bin/ruff`. New `make check` runs lint + tests + the coverage gate
+in one command.
+
 ### Hardened — live auth server systemd unit
 
 Applied a hardening drop-in to the live `hermes-id-auth` unit:
