@@ -45,9 +45,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[all,dev]"
 
+      - name: Cache pip
+        uses: actions/cache@v7
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+
       - name: Lint
         run: |
-          pip install ruff
+          # ruff comes from the [dev] extras installed above.
           ruff check src/ tests/
 
       - name: Test
