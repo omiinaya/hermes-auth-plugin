@@ -87,6 +87,10 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 addopts = "--cov=hermes_id --cov-report=term-missing --cov-fail-under=85"
 testpaths = ["tests"]
+# Fail a single test after 5 minutes — a hung test (network wait, deadlock)
+# shouldn't stall the whole run. The integration tests that spawn CLI
+# subprocesses have their own longer subprocess timeout.
+timeout = 300
 
 [tool.coverage.run]
 branch = true
