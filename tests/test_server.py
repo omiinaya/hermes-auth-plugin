@@ -133,6 +133,24 @@ class TestServerHealth:
         assert "verification_method" in identity
         assert "proof" in identity
 
+    def test_health_unconfigured_returns_unconfigured(self, tmp_path):
+        """An AuthServer with no identity still serves /health with
+        did='unconfigured' instead of 500-ing."""
+        from fastapi.testclient import TestClient
+
+        from hermes_id.server import AuthServer
+
+        srv = AuthServer(
+            identity_dir=str(tmp_path / "empty"),
+            db_path=str(tmp_path / "h.db"),
+            admin_key="k",
+        )
+        with TestClient(srv.app) as c:
+            r = c.get("/health")
+        assert r.status_code == 200
+        assert r.json()["did"] == "unconfigured"
+        assert r.json()["status"] == "ok"
+
 
 # ---------------------------------------------------------------------------
 # Agent Registry

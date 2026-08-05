@@ -53,6 +53,13 @@ KDF contention. Verified: 15/15 integration tests pass under `-n 8`.
 `time.time() - self._started_at`. Test asserts uptime is a small value
 and grows between calls.
 
+### Fixed — /health 500'd when the server had no identity
+
+The `did: "unconfigured"` branch was dead code — `get_identity_card()`
+raises `FileNotFoundError` when unconfigured, so /health 500'd instead
+of reporting `"unconfigured"`. Now catches it. Test covers the
+unconfigured path.
+
 ### Added — contribution & issue hygiene
 
 - `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),

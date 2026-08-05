@@ -668,10 +668,14 @@ class AuthServer:
         @app.get("/health")
         def health():
             """Health check — returns server DID and status."""
-            card = self._storage.get_identity_card()
+            try:
+                card = self._storage.get_identity_card()
+                did = card.id
+            except FileNotFoundError:
+                did = "unconfigured"
             return {
                 "status": "ok",
-                "did": card.id if card else "unconfigured",
+                "did": did,
                 "version": SERVER_VERSION,
                 "uptime": round(time.time() - self._started_at, 3),
             }
