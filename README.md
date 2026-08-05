@@ -5,6 +5,7 @@
 > prove ownership via cryptographic handshake. No central registry needed.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](#)
+[![Version: 1.5.1](https://img.shields.io/badge/version-1.5.1-blue)](#)
 [![Cryptography](https://img.shields.io/badge/crypto-Ed25519%20%7C%20X25519%20%7C%20AES--256--GCM-green)](#)
 [![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen)](#)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](#)
