@@ -353,6 +353,12 @@ class TestRevocationChecker:
         checker = RevocationChecker("http://auth.test")
         assert checker._verify is False
 
+    def test_verify_env_true_honored(self, monkeypatch):
+        """HERMES_AUTH_VERIFY=true resolves to True."""
+        monkeypatch.setenv("HERMES_AUTH_VERIFY", "true")
+        checker = RevocationChecker("http://auth.test")
+        assert checker._verify is True
+
     def test_verify_env_ca_path_honored(self, monkeypatch):
         """HERMES_AUTH_VERIFY as a CA-bundle path is passed through."""
         monkeypatch.setenv("HERMES_AUTH_VERIFY", "/tmp/ca.pem")
