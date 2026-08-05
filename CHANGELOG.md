@@ -9,6 +9,13 @@ venv (MCP), and gateway plugin. Auth server restarted and verified:
 health reports 1.5.0, identity DID unchanged (no data loss), /verify
 rejects garbage tokens, MCP serverInfo advertises 1.5.0.
 
+### Changed — Docker image runs as non-root
+
+The Dockerfile ran the auth server as root. It now creates an unprivileged
+`hermesid` (uid 10001) user, owns `/app/identity` + `/app/data`, and runs
+the server as that user — an auth server holding keys/tokens shouldn't be
+root.
+
 ### Added — contribution & issue hygiene
 
 - `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),

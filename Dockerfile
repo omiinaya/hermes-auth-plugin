@@ -12,6 +12,14 @@ WORKDIR /app
 COPY . /app/src-tree
 RUN pip install --no-cache-dir "/app/src-tree[server]" && rm -rf /app/src-tree
 
+# Run as an unprivileged user — an auth server holding keys/tokens should
+# not run as root. Create the runtime dirs owned by that user.
+RUN useradd --create-home --uid 10001 hermesid \
+    && mkdir -p /app/identity /app/data \
+    && chown -R hermesid:hermesid /app/identity /app/data
+
+USER hermesid
+
 VOLUME /app/identity
 VOLUME /app/data
 
