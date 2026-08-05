@@ -18,6 +18,10 @@ dispatch and `_find_cli` (help text, status delegation, unknown commands)
 without a live gateway — the plugin is thin but user-facing, and was the
 one untested file.
 
+(Deployed the rebuilt 1.5.1 wheel with the context-manager additions to
+user-site, gateway venv, and spacetime-code venv — the agent-client
+example now expects `with AuthFlow(...)`.)
+
 ### Deployed — health-endpoint fixes to all live installs
 
 Rebuilt and redeployed to user-site (PROD), gateway venv, spacetime-code
