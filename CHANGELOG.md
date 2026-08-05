@@ -2,6 +2,13 @@
 
 ## 1.5.1 — 2026-08-05 (health-endpoint fixes)
 
+### Deployed — health-endpoint fixes to all live installs
+
+Rebuilt and redeployed to user-site (PROD), gateway venv, spacetime-code
+venv (MCP), and gateway plugin. Auth server restarted and verified:
+health reports 1.5.1 with a real `uptime` (elapsed seconds, ~29s — not
+the epoch), identity DID unchanged, MCP serverInfo advertises 1.5.1.
+
 ### Fixed — /health uptime was the epoch, not elapsed seconds
 
 `GET /health` returned `"uptime": time.time()` — the current epoch
