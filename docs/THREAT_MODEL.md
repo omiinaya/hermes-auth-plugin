@@ -1,6 +1,6 @@
 # Threat Model for hermes-id
 
-> **Document version:** 1.1
+> **Document version:** 1.2
 > **Scope:** Ed25519-based self-sovereign identity for Hermes Agent instances
 > **Review date:** August 2026
 
