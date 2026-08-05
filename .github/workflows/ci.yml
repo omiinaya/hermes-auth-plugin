@@ -52,10 +52,11 @@ jobs:
 
       - name: Test
         run: |
-          # -n auto: the self-hosted runner has many cores; the suite runs
-          # several times faster in parallel. Tests use ephemeral ports so
-          # xdist worker isolation is safe.
-          python -m pytest tests/ -v --tb=short -n auto --cov=hermes_id --cov-report=term-missing --cov-fail-under=85
+          # -n 16: the self-hosted runner shares this box with many other
+          # services; capping workers avoids CPU contention with them (and
+          # with concurrent local runs). Still ~3-4x faster than serial.
+          # Tests use ephemeral ports so worker isolation is safe.
+          python -m pytest tests/ -v --tb=short -n 16 --cov=hermes_id --cov-report=term-missing --cov-fail-under=85
           # pytest-cov writes .coverage to the repo root; confirm it exists
           # and normalize its name for the artifact step.
           ls -la .coverage && cp .coverage coverage-${{ matrix.python-version }}.data 2>/dev/null || true
