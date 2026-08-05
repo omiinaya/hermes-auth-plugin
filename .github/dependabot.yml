@@ -33,6 +33,8 @@ updates:
           - "pydantic"
           - "httpx"
           - "pyjwt"
+          - "mcp"
+          - "mcp-types"
         update-types:
           - "minor"
           - "patch"
