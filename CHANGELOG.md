@@ -72,6 +72,13 @@ An attempted `actions/cache` for `~/.cache/pip` was reverted — the
 self-hosted runner already keeps a persistent local pip cache, and the
 remote cache upload/download slowed the run from ~10min to ~38min.
 
+### Fixed — /agent/status leaked the auth-server URL
+
+`build_agent_router`'s unauthenticated `/agent/status` returned
+`auth._server_url` (the private auth-server address). Removed — only the
+scoped project name and card-cache state are revealed to unauthenticated
+callers. Test asserts the URL is absent.
+
 ### Hardened — live auth server systemd unit
 
 Applied a hardening drop-in to the live `hermes-id-auth` unit:
