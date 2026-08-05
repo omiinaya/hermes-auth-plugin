@@ -16,6 +16,11 @@ The Dockerfile ran the auth server as root. It now creates an unprivileged
 the server as that user — an auth server holding keys/tokens shouldn't be
 root.
 
+### Added — docker-compose healthcheck
+
+The compose service now polls `/health` (30s interval, 3 retries,
+10s start period) so orchestrators can detect a wedged auth server.
+
 ### Added — contribution & issue hygiene
 
 - `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),
