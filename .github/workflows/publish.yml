@@ -27,21 +27,15 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: [self-hosted, ubuntu-latest]
+    runs-on: ubuntu-latest
     environment: pypi
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Python
-        run: |
-          # Debian 12 self-hosted runner: actions/setup-python has NO prebuilt
-          # versions (see ci.yml). Use the system Python 3.11 + job-local venv.
-          PY=$(command -v python3.11 || command -v python3)
-          $PY -m venv "$RUNNER_TEMP/pypi-venv"
-          echo "$RUNNER_TEMP/pypi-venv/bin" >> "$GITHUB_PATH"
-          # NOTE: use $PY, not bare `python` — runner PATH has no `python`
-          # symlink (same exit-127 class as ci.yml).
-          "$PY" --version
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Install build tooling
         run: |
