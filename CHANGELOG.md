@@ -2,6 +2,13 @@
 
 ## 1.5.0 — 2026-08-05 (security hardening + CLI robustness)
 
+### Deployed — security hardening batch to all live installs
+
+Rebuilt and redeployed to user-site (PROD), gateway venv, spacetime-code
+venv (MCP), and gateway plugin. Auth server restarted and verified:
+health reports 1.5.0, identity DID unchanged (no data loss), /verify
+rejects garbage tokens, MCP serverInfo advertises 1.5.0.
+
 ### Added — contribution & issue hygiene
 
 - `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),
