@@ -606,6 +606,9 @@ class TestFastAPIPlugin:
         assert body["configured"] is True
         assert body["project"] == "spacetime-test"
         assert body["server_card_cached"] is True
+        # The auth-server URL is deliberately NOT exposed to unauthenticated
+        # callers (privacy hardening).
+        assert "auth_server_url" not in body
 
     def test_me_requires_token(self, server_url, auth_cache_dir):
         app = self._make_app(server_url, "spacetime-test", auth_cache_dir)

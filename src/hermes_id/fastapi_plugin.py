@@ -91,9 +91,11 @@ def build_agent_router(auth: HermesIDAuth) -> APIRouter:
             card_did = card.get("id", "")
         except Exception:
             card_ok = False
+        # Note: deliberately does NOT expose auth._server_url — the auth
+        # server address is private to the deployment, not to unauthenticated
+        # callers. Only the scoped project name is revealed.
         return {
             "configured": True,
-            "auth_server_url": auth._server_url,
             "project": auth._project,
             "server_card_cached": card_ok,
             "server_did": card_did,
