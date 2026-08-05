@@ -428,3 +428,10 @@ class AuthFlow:
 
     def close(self) -> None:
         self._client.close()
+
+    def __enter__(self) -> AuthFlow:
+        """Support ``with AuthFlow(...) as flow:`` (auto-close)."""
+        return self
+
+    def __exit__(self, *exc_args) -> None:
+        self.close()

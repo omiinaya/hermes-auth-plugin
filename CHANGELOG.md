@@ -8,6 +8,9 @@
 auto-closes the HTTP client on exit — no more manual `try/finally:
 client.close()` boilerplate. (Backward compatible; `close()` unchanged.)
 
+`AuthFlow` got the same context-manager support, and
+`examples/agent_client.py` now demonstrates it.
+
 ### Deployed — health-endpoint fixes to all live installs
 
 Rebuilt and redeployed to user-site (PROD), gateway venv, spacetime-code

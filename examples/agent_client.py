@@ -40,16 +40,14 @@ def main():
 
     # Step 1: Authenticate with the hermes-id Auth Server
     print(f"🔐 Authenticating with {args.auth_server}...")
-    flow = AuthFlow(args.auth_server)
-    try:
-        token, result = flow.login(aud=args.project)
-    except Exception as e:
-        print(f"❌ Authentication failed: {e}")
-        print("   Make sure the auth server is running and this agent is")
-        print("   registered and approved.")
-        sys.exit(1)
-    finally:
-        flow.close()
+    with AuthFlow(args.auth_server) as flow:
+        try:
+            token, result = flow.login(aud=args.project)
+        except Exception as e:
+            print(f"❌ Authentication failed: {e}")
+            print("   Make sure the auth server is running and this agent is")
+            print("   registered and approved.")
+            sys.exit(1)
 
     print(f"✅ Authenticated as {result['did'][:24]}...")
     print(f"   Audience: {result.get('aud', '(none)')}")
