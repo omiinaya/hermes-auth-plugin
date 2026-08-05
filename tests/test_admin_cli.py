@@ -54,6 +54,13 @@ def fake_client(monkeypatch):
 
 
 class TestAdminCLI:
+    def test_help_exits_zero(self, capsys):
+        """--help prints usage and exits 0."""
+        with pytest.raises(SystemExit) as exc:
+            main(["--help"])
+        assert exc.value.code == 0
+        assert "usage" in capsys.readouterr().out
+
     def test_missing_admin_key_exits(self, capsys, monkeypatch):
         monkeypatch.delenv("HERMES_ID_ADMIN_KEY", raising=False)
         with pytest.raises(SystemExit) as exc:
