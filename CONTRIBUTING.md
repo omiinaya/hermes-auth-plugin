@@ -99,5 +99,8 @@ the version lives in `pyproject.toml` / `__version__` / plugin files):
    - gateway venv + spacetime-code venv (the MCP host)
    - plugin files: `cp plugins/hermes-id/* ~/.hermes/plugins/hermes-id/`
    - restart the auth service (`su-run "systemctl restart hermes-id-auth"`)
-6. Verify: `curl -sk https://192.168.1.10:9488/health` reports the new
+6. Refresh the local package index for this box/LAN:
+   `./scripts/publish-local.sh` (serves the wheel at
+   `http://192.168.1.10:9499/simple/`).
+7. Verify: `curl -sk https://192.168.1.10:9488/health` reports the new
    version; MCP `serverInfo` reports it too; identity DID unchanged.
