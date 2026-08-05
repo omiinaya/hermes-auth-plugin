@@ -185,6 +185,13 @@ open a public issue for security bugs.
 | [AGENTS.md](./AGENTS.md) | Quickstart for AI agent coders |
 | [SKILL.md](./SKILL.md) | Hermes Agent skill definition |
 
+## Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) for the
+dev setup, testing gates (100% coverage), and release process. **Security
+vulnerabilities**: report privately per [SECURITY.md](./SECURITY.md) —
+do not open a public issue.
+
 ## Development
 
 ```bash
