@@ -164,6 +164,25 @@ class TestSignChallengeErrors:
             client.close()
 
 
+class TestContextManager:
+    def test_with_statement_closes_client(self):
+        """``with AuthClient(...) as client:`` auto-closes on exit."""
+        from hermes_id.auth_client import AuthClient
+
+        class FakeHTTPX:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        client = AuthClient.__new__(AuthClient)
+        client._client = FakeHTTPX()
+        with client as c:
+            assert c is client
+        assert client._client.closed is True
+
+
 class TestRefreshAndList:
     def test_refresh_token_401_returns_none(self):
         """refresh_token returns None on 401 (invalid/expired token)."""

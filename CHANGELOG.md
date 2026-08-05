@@ -2,6 +2,12 @@
 
 ## 1.5.1 — 2026-08-05 (health-endpoint fixes)
 
+### Added — AuthClient context-manager support
+
+`AuthClient` now supports `with AuthClient(...) as client:` and
+auto-closes the HTTP client on exit — no more manual `try/finally:
+client.close()` boilerplate. (Backward compatible; `close()` unchanged.)
+
 ### Deployed — health-endpoint fixes to all live installs
 
 Rebuilt and redeployed to user-site (PROD), gateway venv, spacetime-code

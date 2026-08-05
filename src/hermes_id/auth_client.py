@@ -90,6 +90,13 @@ class AuthClient:
         """Close the underlying HTTP client."""
         self._client.close()
 
+    def __enter__(self) -> AuthClient:
+        """Support ``with AuthClient(...) as client:`` (auto-close)."""
+        return self
+
+    def __exit__(self, *exc_args) -> None:
+        self.close()
+
     # ------------------------------------------------------------------
     # Identity
     # ------------------------------------------------------------------
