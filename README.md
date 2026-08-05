@@ -198,7 +198,7 @@ make lint
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).
 
 ---
 
