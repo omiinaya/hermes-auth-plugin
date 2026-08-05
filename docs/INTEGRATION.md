@@ -74,7 +74,7 @@ hermes-id server --host 0.0.0.0 --port 9488
 
 **Output:**
 ```
-🔐  hermes-id Auth Server v1.4.1
+🔐  hermes-id Auth Server v1.5.0
     Server DID:    did:hermes:wUFSjG64-BBT
     Listening:     http://0.0.0.0:9488
     API docs:      http://0.0.0.0:9488/docs
