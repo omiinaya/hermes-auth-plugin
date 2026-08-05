@@ -205,6 +205,9 @@ make test
 
 # Code quality
 make lint
+
+# Optional: pre-commit hooks (ruff lint + whitespace checks)
+pip install pre-commit && pre-commit install
 ```
 
 ## License

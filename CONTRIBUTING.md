@@ -56,9 +56,11 @@ make lint
 3. Run `make coverage` — **or `make check`** (lint + tests + the 100%
    coverage gate in one command). The gate is 85 but the project sits at
    100; keep it there.
-4. If you changed crypto, handshake, or auth logic, review `docs/THREAT_MODEL.md`
+4. (Optional) `pip install pre-commit && pre-commit install` for
+   commit-time ruff + whitespace checks.
+5. If you changed crypto, handshake, or auth logic, review `docs/THREAT_MODEL.md`
    and update it if your change affects the threat surface.
-5. Update `CHANGELOG.md` under "Unreleased".
+6. Update `CHANGELOG.md` under "Unreleased".
 
 ## Branching
 
