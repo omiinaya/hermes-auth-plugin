@@ -141,9 +141,11 @@ KDF contention. Verified: 15/15 integration tests pass under `-n 8`.
 ### Added — contribution & issue hygiene
 
 - `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),
-  security ground rules, branch guidance.
+  security ground rules, branch guidance, release process.
 - `.github/ISSUE_TEMPLATE/bug_report.yml` — structured bug reports with
   a prominent security-report redirect.
+- `.github/ISSUE_TEMPLATE/feature_request.yml` — feature proposals framed
+  with security/compatibility impact questions.
 - `.github/pull_request_template.md` — security/correctness + testing
   checklist.
 - README docs table links `CONTRIBUTING.md`.
