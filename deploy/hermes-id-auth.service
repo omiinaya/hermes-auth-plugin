@@ -5,6 +5,8 @@ After=network.target
 
 [Service]
 Type=simple
+# Customize for your deployment: the user/group must own /opt/hermes-id
+# and have a hermes-id CLI on its PATH (e.g. ~/.local/bin/hermes-id).
 User=hermes-id
 Group=hermes-id
 WorkingDirectory=/opt/hermes-id
