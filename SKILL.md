@@ -64,3 +64,6 @@ When verifying another agent's identity:
 - Store your passphrase in a password manager — **it cannot be recovered**
 - The identity card (public JSON) can be shared freely
 - Always verify a peer's card before trusting their claims
+- Tokens can be revoked server-side; the auth server rate-limits every
+  endpoint and compares admin keys in constant time
+- Found a vulnerability? Report privately per [SECURITY.md](./SECURITY.md)
