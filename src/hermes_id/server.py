@@ -44,6 +44,7 @@ Admin Authentication
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -393,7 +394,7 @@ class AuthServer:
         Raises:
             HTTPException(403): invalid or missing key.
         """
-        if x_admin_key and x_admin_key == self._admin_key:
+        if x_admin_key and hmac.compare_digest(x_admin_key, self._admin_key):
             return None  # global key — unrestricted
         if x_admin_key in self._scoped_admin_keys:
             return self._scoped_admin_keys[x_admin_key]

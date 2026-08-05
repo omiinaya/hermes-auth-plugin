@@ -102,6 +102,18 @@ Fixed three ways:
   finds a valid signature that starts with `-` and asserts both forms work;
   `_rewrite_verify_sig_argv` gets direct unit coverage for every branch.
 
+### Fixed — timing-safe admin key comparison
+
+`_authorize_admin` compared the `X-Admin-Key` header against the server's
+admin key with plain `==`, which leaks comparison timing (a low-probability
+but real timing-oracle on a secret). Now uses `hmac.compare_digest()`.
+Scoped-per-project keys are still stored as a constant-time dict lookup.
+
+### Changed — `make coverage` matches CI
+
+The `coverage` / `coverage-html` targets now pass `--cov-branch` and
+`--cov-fail-under=85`, so a local coverage run enforces the same gate as CI.
+
 ## 1.4.4 — 2026-08-04
 
 ### Deployed — token-endpoint rate limiting to the live auth host
