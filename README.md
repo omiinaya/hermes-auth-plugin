@@ -177,6 +177,7 @@ open a public issue for security bugs.
 | File | Contents |
 |------|----------|
 | [ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Full architectural decisions and design rationale |
+| [INTEGRATION.md](./docs/INTEGRATION.md) | Deploy the Auth Server + protect your service with hermes-id tokens |
 | [PROTOCOL.md](./docs/PROTOCOL.md) | Wire protocol specification for implementers |
 | [THREAT_MODEL.md](./docs/THREAT_MODEL.md) | Security analysis, assumptions, and mitigations |
 | [SECURITY.md](./SECURITY.md) | Vulnerability disclosure policy and supported versions |
