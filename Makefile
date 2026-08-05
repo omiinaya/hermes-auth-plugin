@@ -53,6 +53,7 @@ docker-run:
 		-p 9488:9488 \
 		-e HERMES_ID_PASSPHRASE="${HERMES_ID_PASSPHRASE}" \
 		-e HERMES_ID_ADMIN_KEY="${HERMES_ID_ADMIN_KEY}" \
+		-v $(PWD)/identity:/app/identity \
 		-v $(PWD)/data:/app/data \
 		hermes-id-auth
 
