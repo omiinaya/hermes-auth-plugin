@@ -16,29 +16,18 @@ concurrency:
 
 jobs:
   test:
-    runs-on: [self-hosted, ubuntu-latest]
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Debian 12 self-hosted runner: actions/setup-python has NO prebuilt
-        # versions for Debian 12 (3.11/3.12/3.13 all fail). Use the system
-        # Python 3.11 which is pre-installed on the runner.
         python-version: ["3.11"]
 
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        run: |
-          PY=$(command -v python3.11 || command -v python3)
-          echo "Using system Python: $PY ($($PY --version 2>&1))"
-          # System python3.11 is the root-owned hermes-agent venv — create a
-          # fresh job-local venv so pip can install without permission issues.
-          $PY -m venv "$RUNNER_TEMP/ci-venv"
-          echo "$RUNNER_TEMP/ci-venv/bin" >> "$GITHUB_PATH"
-          # NOTE: use $PY, not plain `python` — the runner PATH has no bare
-          # `python` symlink, so `python --version` here exits 127 and the
-          # step (and whole job) fails before any test runs.
-          "$PY" --version
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
@@ -52,9 +41,6 @@ jobs:
 
       - name: Test
         run: |
-          # -n 16: the self-hosted runner shares this box with many other
-          # services; capping workers avoids CPU contention with them (and
-          # with concurrent local runs). Still ~3-4x faster than serial.
           # Tests use ephemeral ports so worker isolation is safe.
           python -m pytest tests/ -v --tb=short -n 16 --cov=hermes_id --cov-report=term-missing --cov-fail-under=85
           # pytest-cov writes .coverage to the repo root; confirm it exists
