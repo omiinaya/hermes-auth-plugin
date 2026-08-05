@@ -21,6 +21,14 @@ root.
 The compose service now polls `/health` (30s interval, 3 retries,
 10s start period) so orchestrators can detect a wedged auth server.
 
+### Changed — CI tests run in parallel (pytest-xdist)
+
+The suite ran serially (~6 min local, ~13 min on the runner). Added
+`pytest-xdist` to dev deps and `-n auto` to the CI test step — the
+runner has 48 cores, and tests already use ephemeral ports so worker
+isolation is safe. Full suite: 529 passed in ~2.5 min with the same
+100.00% coverage gate. Locally: `pytest -n auto` for a fast full run.
+
 ### Added — contribution & issue hygiene
 
 - `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),
