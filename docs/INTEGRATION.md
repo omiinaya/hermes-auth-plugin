@@ -199,6 +199,9 @@ docker run -d \
   hermes-id-auth
 ```
 
+> The image runs as an unprivileged user (`hermesid`, uid 10001) — mount
+> the identity/data volumes with ownership that user can write to.
+
 ### Docker Compose
 
 ```yaml
@@ -212,6 +215,12 @@ services:
     volumes:
       - ./identity:/app/identity
       - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9488/health', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   my-service:
     build: ./my-service
@@ -220,7 +229,8 @@ services:
       HERMES_AUTH_SERVER_URL: http://auth:9488
       HERMES_AUTH_PROJECT: my-service
     depends_on:
-      - auth
+      auth:
+        condition: service_healthy
 ```
 
 ### systemd
