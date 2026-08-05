@@ -333,7 +333,7 @@ payload = verify_token_offline(token, card, project="spacetime-tv")
 | `POST` | `/agents/{did}/deny` | Admin: deny an agent |
 | `GET` | `/agents/{did}/status` | Check agent's approval status |
 | `DELETE` | `/agents/{did}` | Remove agent from registry |
-| `GET` | `/health` | Health check + server DID |
+| `GET` | `/health` | Health check + server DID (status, did, version, uptime) |
 
 ### MCP Server
 
