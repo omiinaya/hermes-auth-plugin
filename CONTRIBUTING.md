@@ -67,8 +67,8 @@ commits focused. Don't force-push shared branches.
 
 ## Testing guidance
 
-The suite is fast (~6 min) but the CLI/scrypt tests are the slowest. Run a
-targeted subset while iterating:
+The full suite is fast (~2 min with `-n auto`) but the CLI/scrypt tests are
+the slowest. Run a targeted subset while iterating:
 
 ```bash
 pytest tests/test_crypto.py tests/test_identity.py -q
@@ -77,3 +77,25 @@ pytest tests/test_server.py -q
 
 Then run the full suite + coverage gate before pushing — CI enforces it, so
 save yourself the round-trip.
+
+## Releasing
+
+Releases are version bumps + CHANGELOG sections + deploy (no git tags —
+the version lives in `pyproject.toml` / `__version__` / plugin files):
+
+1. Move the `## Unreleased` CHANGELOG block to a dated `## X.Y.Z` section.
+2. Bump the version in **all four** places (they must match):
+   - `pyproject.toml` (`version = ...`)
+   - `src/hermes_id/__init__.py` (`__version__ = ...`)
+   - `plugins/hermes-id/plugin.yaml`
+   - `plugins/hermes-id/__init__.py` docstring
+3. Push, let CI go green.
+4. Build: `.venv/bin/python -m build`
+5. Deploy (see past `release:` commits):
+   - user-site PROD: `/usr/bin/python3 -m pip install --user
+     --break-system-packages --force-reinstall --no-deps dist/*.whl`
+   - gateway venv + spacetime-code venv (the MCP host)
+   - plugin files: `cp plugins/hermes-id/* ~/.hermes/plugins/hermes-id/`
+   - restart the auth service (`su-run "systemctl restart hermes-id-auth"`)
+6. Verify: `curl -sk https://192.168.1.10:9488/health` reports the new
+   version; MCP `serverInfo` reports it too; identity DID unchanged.
