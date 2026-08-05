@@ -2,6 +2,16 @@
 
 ## Unreleased — 2026-08-04 (security hardening batch)
 
+### Added — contribution & issue hygiene
+
+- `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),
+  security ground rules, branch guidance.
+- `.github/ISSUE_TEMPLATE/bug_report.yml` — structured bug reports with
+  a prominent security-report redirect.
+- `.github/pull_request_template.md` — security/correctness + testing
+  checklist.
+- README docs table links `CONTRIBUTING.md`.
+
 ### Added — dependabot + SECURITY.md
 
 - `.github/dependabot.yml`: weekly `pip` + `github-actions` updates with

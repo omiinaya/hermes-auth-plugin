@@ -180,6 +180,7 @@ open a public issue for security bugs.
 | [PROTOCOL.md](./docs/PROTOCOL.md) | Wire protocol specification for implementers |
 | [THREAT_MODEL.md](./docs/THREAT_MODEL.md) | Security analysis, assumptions, and mitigations |
 | [SECURITY.md](./SECURITY.md) | Vulnerability disclosure policy and supported versions |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | How to contribute — testing, lint, coverage gates |
 | [AGENTS.md](./AGENTS.md) | Quickstart for AI agent coders |
 | [SKILL.md](./SKILL.md) | Hermes Agent skill definition |
 
