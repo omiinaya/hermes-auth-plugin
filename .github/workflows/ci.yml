@@ -7,9 +7,7 @@ on:
     branches: [master]
   workflow_dispatch:  # allow manual re-runs from the Actions tab
 
-# The self-hosted runner processes one job at a time, so rapid consecutive
-# pushes queue up and block CI for everyone. Cancel superseded runs: only
-# the latest push/PR per ref actually runs.
+# Cancel superseded runs: only the latest push/PR per ref actually runs.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
