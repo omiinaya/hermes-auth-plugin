@@ -254,3 +254,11 @@ points:
 | Self-signature forgery | Ed25519 SUF-CMA, card verified before trust |
 | Weak passphrase | Min 8 chars, memory-hard KDF prevents offline bruteforce |
 | Random number weakness | `os.urandom()` — kernel CSPRNG |
+
+## Related Docs
+
+- [INTEGRATION.md](./INTEGRATION.md) — deploying the HTTP **Auth Server** and
+  protecting your service with hermes-id tokens (offline-first verification,
+  audience enforcement, agent registry)
+- [PROTOCOL.md](./PROTOCOL.md) — the mutual-auth handshake wire protocol
+- [THREAT_MODEL.md](./THREAT_MODEL.md) — the security analysis
