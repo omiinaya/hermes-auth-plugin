@@ -274,14 +274,6 @@ class TestStorageConfigBranches:
         assert isinstance(loaded, StorageConfig)
         assert loaded.version == 1
 
-    def test_show_status_after_rotate_shows_transition(self, created_identity):
-        """show_status() reports the rotation transition proof after rotate."""
-        storage, password, _ = created_identity
-        storage.rotate(password)
-        status = storage.show_status()
-        assert "Rotated" in status
-        assert "transition proof present" in status
-
     def test_detect_kdf_argon2(self, monkeypatch):
         """_detect_kdf returns argon2id when the argon2 module is present."""
         from hermes_id.storage import IdentityStorage
@@ -378,6 +370,14 @@ class TestKeyContextExit:
 
 
 class TestShowStatusMetadataLines:
+    def test_show_status_after_rotate_shows_transition(self, created_identity):
+        """show_status() reports the rotation transition proof after rotate."""
+        storage, password, _ = created_identity
+        storage.rotate(password)
+        status = storage.show_status()
+        assert "Rotated" in status
+        assert "transition proof present" in status
+
     def test_rotation_badge_without_base_metadata(self, tmp_path):
         """A card carrying rotation info but an empty metadata dict renders
         the 'Rotated' badge line."""
