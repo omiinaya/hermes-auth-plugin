@@ -13,6 +13,7 @@
 6. [Key Storage](#key-storage)
 7. [Code Architecture](#code-architecture)
 8. [Threat Model Summary](#threat-model-summary)
+9. [Related Docs](#related-docs)
 
 ---
 
