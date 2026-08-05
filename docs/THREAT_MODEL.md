@@ -41,6 +41,7 @@
 | T11 | **Memory exposure** (private key left in memory after use) | Medium (core dumps, swap) | **High** | `secure_zero()` (via `ctypes` `memset`) clears the raw DER/session key buffers we control on every unlock/use/rotate. The `cryptography` object itself may survive in Python's GC, but the serialized bytes we hold are overwritten. |
 | T12 | **Denial of service** (handshake server resource exhaustion) | Medium (public-facing server) | **Medium** | The auth server (FastAPI/uvicorn) rate-limits per IP. The TCP handshake server is single-threaded, one connection at a time; for production, wrap with a reverse proxy (nginx) for connection limits. |
 | T13 | **Revoked-token reuse** (stolen token used after revocation) | Medium | **High** — attacker reuses a token past its revocation | The auth server keeps an `invalidated_tokens` blacklist; `/verify` (and the offline SDK revocation checker) consult it. Blacklist rows are opportunistically pruned once their tokens have expired, keeping the table bounded. |
+| T14 | **Admin-key timing side-channel** (recover the admin key by measuring comparison time) | Very low (needs network timing analysis over TLS) | **High** — admin key grants full registry control | The admin key is compared with `hmac.compare_digest` (constant time), so an attacker cannot infer the key from response timing. Combined with TLS and rate limiting, timing exfiltration is not practical. |
 
 ## Security Controls Summary
 
@@ -52,6 +53,7 @@
 | Mutual authentication | Handshake | T4 — MITM |
 | Self-signature verification | Identity card | T5 — card tampering |
 | Constant-time crypto | `cryptography` library | T6 — side channels |
+| Constant-time admin key compare | `hmac.compare_digest` | T14 — admin-key timing |
 | Kernel CSPRNG | `os.urandom()` | T7 — weak randomness |
 | File permissions (0600/0700) | Filesystem | T1 — unauthorized file access |
 | Ephemeral X25519 keys | Handshake (optional) | T10 — forward secrecy |
