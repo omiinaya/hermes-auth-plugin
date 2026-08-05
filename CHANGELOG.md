@@ -44,6 +44,13 @@ contexts carried `.git/`, `.venv/`, `dist/`, tests, docs — and could
 carry `.env`, `*.pem`, `*.key`, or `identity/` if present. The
 .dockerignore excludes all of those.
 
+### Added — pre-commit config
+
+`.pre-commit-config.yaml` runs ruff lint (pinned to the installed
+0.16.1) plus trailing-whitespace / end-of-file / yaml / large-file /
+merge-conflict checks. Lint only — the project doesn't enforce
+ruff-format, matching the Makefile/CI.
+
 ### Hardened — live auth server systemd unit
 
 Applied a hardening drop-in to the live `hermes-id-auth` unit:
