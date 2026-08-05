@@ -7,7 +7,7 @@ dev:
 	pip install -e ".[all]"
 
 test:
-	python -m pytest tests/ -v --tb=short
+	python -m pytest tests/ -v --tb=short -n auto
 
 test-verbose:
 	python -m pytest tests/ -v --tb=long -s
