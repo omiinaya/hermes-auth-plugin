@@ -124,6 +124,15 @@ Scoped-per-project keys are still stored as a constant-time dict lookup.
 The `coverage` / `coverage-html` targets now pass `--cov-branch` and
 `--cov-fail-under=85`, so a local coverage run enforces the same gate as CI.
 
+### Added — CORS wildcard+credentials warning
+
+The auth server defaulted to `allow_origins=["*"]` with
+`allow_credentials=True` — a combination browsers reject per the Fetch
+spec (Access-Control-Allow-Origin: * + credentials), so browser clients
+would silently fail CORS. The server now logs a warning when the wildcard
+combo is in effect, telling operators to set `HERMES_ID_CORS_ORIGINS` to
+explicit origins. Two tests cover the warn / no-warn paths.
+
 ## 1.4.4 — 2026-08-04
 
 ### Deployed — token-endpoint rate limiting to the live auth host

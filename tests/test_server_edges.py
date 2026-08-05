@@ -1024,6 +1024,46 @@ class TestVerifyAuthToken:
 
 
 class TestInternalBranches:
+    def test_cors_wildcard_credentials_warns(self, server_identity, tmp_path, caplog):
+        """A wildcard CORS origin + allow_credentials=True logs a warning —
+        browsers reject that combination per the Fetch spec, so operators
+        should set explicit origins."""
+        import logging
+
+        from hermes_id.server import AuthServer
+
+        db = tmp_path / "cors.db"
+        with caplog.at_level(logging.WARNING, logger="hermes_id.server"):
+            AuthServer(
+                identity_dir=server_identity,
+                db_path=str(db),
+                admin_key="k",
+                cors_origins=["*"],
+            )
+        assert any(
+            "CORS" in r.message and "allow_origins" in r.message
+            for r in caplog.records
+        )
+
+    def test_cors_explicit_origins_no_warning(self, server_identity, tmp_path, caplog):
+        """Explicit CORS origins don't trigger the wildcard warning."""
+        import logging
+
+        from hermes_id.server import AuthServer
+
+        db = tmp_path / "cors2.db"
+        with caplog.at_level(logging.WARNING, logger="hermes_id.server"):
+            AuthServer(
+                identity_dir=server_identity,
+                db_path=str(db),
+                admin_key="k",
+                cors_origins=["https://app.example.com"],
+            )
+        assert not any(
+            "CORS" in r.message and "allow_origins" in r.message
+            for r in caplog.records
+        )
+
     def test_agent_projects_missing_row_returns_empty(self, server, tmp_path):
         conn = server._db_connect()
         try:

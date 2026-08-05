@@ -346,6 +346,19 @@ class AuthServer:
             allow_headers=["*"],
             expose_headers=["X-Request-Id"],
         )
+        # Wildcard + credentials is a footgun: per the Fetch spec, browsers
+        # REFUSE to send/receive credentials with Access-Control-Allow-Origin:
+        # * — the middleware will echo "*" (or specific origins it derived),
+        # but credentialed requests from a browser will fail CORS anyway.
+        # This mostly matters for server-to-server / curl usage, but make the
+        # operator think about it explicitly instead of silently inheriting it.
+        if "*" in origins:
+            self._log.warning(
+                "CORS is configured with allow_origins=[\"*\"] + "
+                "allow_credentials=True — browsers will reject credentialed "
+                "requests (spec). Set HERMES_ID_CORS_ORIGINS to explicit "
+                "origins for browser clients."
+            )
 
         # Exception handler for consistent error responses
         @self.app.exception_handler(HTTPException)
