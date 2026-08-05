@@ -11,6 +11,13 @@ client.close()` boilerplate. (Backward compatible; `close()` unchanged.)
 `AuthFlow` got the same context-manager support, and
 `examples/agent_client.py` now demonstrates it.
 
+### Added — Hermes plugin dispatcher tests
+
+`tests/test_plugin.py` exercises the plugin's `_handle` slash-command
+dispatch and `_find_cli` (help text, status delegation, unknown commands)
+without a live gateway — the plugin is thin but user-facing, and was the
+one untested file.
+
 ### Deployed — health-endpoint fixes to all live installs
 
 Rebuilt and redeployed to user-site (PROD), gateway venv, spacetime-code
