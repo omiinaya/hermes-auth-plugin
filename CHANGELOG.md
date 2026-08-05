@@ -65,11 +65,12 @@ so it could verify TLS differently than `AuthClient` / `HermesIDAuth`
 (the middleware path). It now resolves the env var identically
 (explicit arg > env > default True).
 
-### Changed — CI install (pip cache, no redundant ruff)
+### Changed — CI install (no redundant ruff)
 
-Removed the redundant `pip install ruff` (it ships in `[dev]` extras) and
-added an `actions/cache` for `~/.cache/pip` keyed on `pyproject.toml` to
-speed up the Install step on the shared runner.
+Removed the redundant `pip install ruff` (it ships in `[dev]` extras).
+An attempted `actions/cache` for `~/.cache/pip` was reverted — the
+self-hosted runner already keeps a persistent local pip cache, and the
+remote cache upload/download slowed the run from ~10min to ~38min.
 
 ### Hardened — live auth server systemd unit
 
