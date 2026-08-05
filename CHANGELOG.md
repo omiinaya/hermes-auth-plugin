@@ -29,6 +29,14 @@ venv (MCP), and gateway plugin. Auth server restarted and verified:
 health reports 1.5.1 with a real `uptime` (elapsed seconds, ~29s — not
 the epoch), identity DID unchanged, MCP serverInfo advertises 1.5.1.
 
+### Hardened — live auth server systemd unit
+
+Applied a hardening drop-in to the live `hermes-id-auth` unit:
+`PrivateDevices`, `ProtectKernelTunables/Modules/ControlGroups`,
+`RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, and
+`MemoryDenyWriteExecute`. Verified the server restarts and stays healthy
+under the hardened unit, and the identity DID is preserved.
+
 ### Fixed — /health uptime was the epoch, not elapsed seconds
 
 `GET /health` returned `"uptime": time.time()` — the current epoch
