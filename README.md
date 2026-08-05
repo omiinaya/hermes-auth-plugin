@@ -356,21 +356,21 @@ Exposed MCP tools: `hermes_id_status`, `hermes_id_export`, `hermes_id_verify_car
 ```python
 from hermes_id.auth_client import AuthClient
 
-client = AuthClient("http://localhost:9488", identity_dir="~/.hermes/identity")
+# Context manager auto-closes the HTTP client on exit
+with AuthClient("http://localhost:9488", identity_dir="~/.hermes/identity") as client:
+    # Check server health
+    print(client.health())
 
-# Check server health
-print(client.health())
+    # Register this agent
+    client.register_agent("did:hermes:abc", display_name="My Agent")
 
-# Register this agent
-client.register_agent("did:hermes:abc", display_name="My Agent")
+    # Full auth (sign challenge → get token)
+    sig = client.sign_challenge(challenge_b64)
+    result = client.authenticate("did:hermes:abc", challenge_b64, sig)
+    token = result["token"]
 
-# Full auth (sign challenge → get token)
-sig = client.sign_challenge(challenge_b64)
-result = client.authenticate("did:hermes:abc", challenge_b64, sig)
-token = result["token"]
-
-# Verify a token from another agent
-payload = client.verify_token(token)
+    # Verify a token from another agent
+    payload = client.verify_token(token)
 ```
 
 ### Token Format
