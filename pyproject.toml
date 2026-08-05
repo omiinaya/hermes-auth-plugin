@@ -35,6 +35,7 @@ server = [
 ]
 mcp = [
     "mcp>=1.0.0",
+    "mcp-types>=1.0.0",  # modern add_request_handler path imports mcp_types directly
 ]
 all = [
     "argon2-cffi>=21.0.0",
@@ -42,6 +43,7 @@ all = [
     "uvicorn[standard]>=0.29.0",
     "httpx>=0.27.0",
     "mcp>=1.0.0",
+    "mcp-types>=1.0.0",
 ]
 dev = [
     "pytest>=8.0.0",

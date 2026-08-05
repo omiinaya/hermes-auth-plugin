@@ -29,6 +29,13 @@ runner has 48 cores, and tests already use ephemeral ports so worker
 isolation is safe. Full suite: 529 passed in ~2.5 min with the same
 100.00% coverage gate. Locally: `pytest -n auto` for a fast full run.
 
+### Fixed — mcp-types is now an explicit dependency
+
+The modern `add_request_handler` MCP path imports `mcp_types` directly,
+but only `mcp>=1.0.0` was declared. `mcp-types` was being pulled in
+transitively; it's now an explicit dependency of both the `mcp` and
+`all` extras so the modern path can't break on a future mcp release.
+
 ### Added — contribution & issue hygiene
 
 - `CONTRIBUTING.md` — dev setup, testing/coverage gates (100% bar),
