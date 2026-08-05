@@ -242,7 +242,9 @@ cli.py ──► identity.py ──► crypto.py
 
 ## Threat Model Summary
 
-See [THREAT_MODEL.md](./THREAT_MODEL.md) for the full analysis. Key points:
+See [THREAT_MODEL.md](./THREAT_MODEL.md) for the full analysis, and
+[SECURITY.md](../SECURITY.md) for how to report a vulnerability. Key
+points:
 
 | Threat | Mitigation |
 |--------|-----------|
