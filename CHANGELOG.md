@@ -29,6 +29,13 @@ venv (MCP), and gateway plugin. Auth server restarted and verified:
 health reports 1.5.1 with a real `uptime` (elapsed seconds, ~29s — not
 the epoch), identity DID unchanged, MCP serverInfo advertises 1.5.1.
 
+### Updated — local package index (192.168.1.10:9499) to 1.5.1
+
+Ran `scripts/publish-local.sh` so the local PEP 503 index serves the
+1.5.1 wheel/sdist (it had stalled at 1.4.4). Verified `pip install
+--index-url http://192.168.1.10:9499/simple/ hermes-id==1.5.1`
+succeeds.
+
 ### Changed — make targets use the project venv; added `make check`
 
 Bare `python`/`ruff` aren't on PATH in a shell without the venv active
